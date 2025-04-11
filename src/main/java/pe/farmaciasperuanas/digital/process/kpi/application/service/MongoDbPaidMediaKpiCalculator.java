@@ -257,6 +257,9 @@ public class MongoDbPaidMediaKpiCalculator implements PaidMediaKpiCalculatorServ
     /**
      * Procesa los KPIs para un formato específico de una campaña
      */
+    /**
+     * Procesa los KPIs para un formato específico de una campaña
+     */
     private Mono<Integer> processFormatKpis(Campaign campaign, CampaignMedium medium, AtomicInteger counter) {
         String format = medium.getFormat();
 
@@ -271,28 +274,30 @@ public class MongoDbPaidMediaKpiCalculator implements PaidMediaKpiCalculatorServ
 
         final String formatCode = format;
         String kpiPrefix = FORMAT_PREFIX_MAP.get(formatCode);
-
+        log.info("Proveedor:" + campaign.getProviderId());
         log.info("Calculando KPIs para campaña {} formato {}",
                 campaign.getCampaignId(), formatCode);
 
-        // Verificar si ya existen KPIs para este formato y campaña hoy
+        // En lugar de omitir el cálculo si ya existen KPIs, ahora siempre calculamos/actualizamos
         return checkExistingKpisForToday(campaign.getCampaignId(), formatCode)
                 .flatMap(existingCount -> {
                     if (existingCount > 0) {
-                        log.info("Ya existen {} KPIs calculados hoy para campaña {} formato {}. Omitiendo cálculo.",
+                        log.info("Se encontraron {} KPIs existentes para campaña {} formato {}. Actualizando valores.",
                                 existingCount, campaign.getCampaignId(), formatCode);
                         counter.addAndGet(existingCount);
-                        return Mono.just(existingCount);
                     }
 
-                    // No existen KPIs para hoy, calcular normalmente
+                    // Siempre calculamos/actualizamos los KPIs
                     return calculateKpisForFormat(campaign, formatCode, kpiPrefix)
                             .map(kpis -> {
                                 int count = kpis.size();
-                                counter.addAndGet(count);
-                                log.info("Calculados {} KPIs para campaña {} formato {}",
+                                if (existingCount == 0) {
+                                    counter.addAndGet(count);
+                                }
+                                log.info("{} {} KPIs para campaña {} formato {}",
+                                        existingCount > 0 ? "Actualizados" : "Calculados",
                                         count, campaign.getCampaignId(), formatCode);
-                                return count;
+                                return count > 0 ? count : existingCount;
                             })
                             .onErrorResume(e -> {
                                 log.error("Error calculando KPIs para campaña {} formato {}: {}",
@@ -300,10 +305,10 @@ public class MongoDbPaidMediaKpiCalculator implements PaidMediaKpiCalculatorServ
                                 // Asegurar que siempre se creen KPIs por defecto en caso de error
                                 return createDefaultKpisForFormat(campaign, formatCode, kpiPrefix);
                             })
-                            // AÑADIR ESTA LÍNEA PARA FORZAR LA CREACIÓN DE KPIs POR DEFECTO CUANDO COUNT SEA 0
+                            // Si no se calcularon KPIs, crear por defecto
                             .flatMap(count -> {
                                 if (count == 0) {
-                                    log.info("No se calcularon KPIs para campaña {} formato {}. Creando KPIs por defecto forzadamente.",
+                                    log.info("No se calcularon KPIs para campaña {} formato {}. Creando KPIs por defecto.",
                                             campaign.getCampaignId(), formatCode);
                                     return createDefaultKpisForFormat(campaign, formatCode, kpiPrefix);
                                 }
@@ -546,7 +551,10 @@ public class MongoDbPaidMediaKpiCalculator implements PaidMediaKpiCalculatorServ
 
         switch (kpiCode) {
             case "INV": // Inversión
-                return aggregationService.calculateInvestment(campaignId, formatCode)
+                return aggregationService.calculateInvestment(campaignId,
+                                formatCode,
+                                campaign.getProviderId(),
+                                campaign.getCampaignSubId() != null ? campaign.getCampaignSubId() : campaignId)
                         .doOnSuccess(value -> log.debug("Valor calculado para INV: {}", value))
                         .onErrorResume(e -> {
                             log.error("Error calculando INV: {}", e.getMessage());
@@ -554,7 +562,11 @@ public class MongoDbPaidMediaKpiCalculator implements PaidMediaKpiCalculatorServ
                         });
 
             case "ALC": // Alcance
-                return aggregationService.calculateReach(campaignId, formatCode)
+                return aggregationService.calculateReach(
+                                campaignId,
+                                formatCode,
+                                campaign.getProviderId(),
+                                campaign.getCampaignSubId() != null ? campaign.getCampaignSubId() : campaignId)
                         .doOnSuccess(value -> log.debug("Valor calculado para ALC: {}", value))
                         .onErrorResume(e -> {
                             log.error("Error calculando ALC: {}", e.getMessage());
@@ -595,7 +607,10 @@ public class MongoDbPaidMediaKpiCalculator implements PaidMediaKpiCalculatorServ
 
 
             case "SES": // Sesiones
-                return aggregationService.calculateSessions(campaignId, formatCode)
+                return aggregationService.calculateSessions(campaignId,
+                                formatCode,
+                                campaign.getProviderId(),
+                                campaign.getCampaignSubId() != null ? campaign.getCampaignSubId() : campaignId)
                         .doOnSuccess(value -> log.debug("Valor calculado para SES: {}", value))
                         .onErrorResume(e -> {
                             log.error("Error calculando SES: {}", e.getMessage());

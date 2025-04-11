@@ -14,15 +14,20 @@ import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Repository;
 import pe.farmaciasperuanas.digital.process.kpi.domain.entity.Kpi;
 import pe.farmaciasperuanas.digital.process.kpi.domain.entity.Metrics;
+import pe.farmaciasperuanas.digital.process.kpi.domain.model.Campaign;
+import pe.farmaciasperuanas.digital.process.kpi.domain.model.Provider;
 import pe.farmaciasperuanas.digital.process.kpi.domain.port.repository.KpiRepository;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.text.SimpleDateFormat;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * Implement class for running Spring Boot framework.<br/>
@@ -759,41 +764,126 @@ public class KpiRepositoryImpl implements KpiRepository{
                 });
     }
 
-    @Override
-    public Flux<Metrics> generateMetricsGeneral() {
+    /**
+     * Método principal para generar todas las métricas secuencialmente
+     */
+    public Mono<Void> generateAllMetrics() {
+        System.out.println("Iniciando proceso de generación de todas las métricas...");
 
-
-        Flux<Document> providerResults = getProviderResults();
-        return providerResults.flatMap(document -> {
-            Metrics metrics = new Metrics();
-            //metrics.setProviderId(document.getObjectId("providerId"));
-            //metrics.setProviderId(document.getObjectId("providerId").toString());
-            metrics.setProviderId(document.getString("providerId"));
-            metrics.setTotalActiveCampaigns(document.getInteger("totalActiveCampaigns"));
-            metrics.setTotalInvestmentPeriod(document.getDouble("totalInvestmentPeriod"));
-            metrics.setTotalSales(document.getDouble("totalSales"));
-            metrics.setCreatedUser("-");
-            metrics.setCreatedDate(LocalDateTime.now());
-            metrics.setUpdatedDate(LocalDateTime.now());
-
-            return reactiveMongoTemplate.save(metrics);
-        });
+        // Ejecutamos cada método de generación de métricas en secuencia
+        return generateMetricsGeneral()
+                .thenMany(generateInvestmentMetrics())
+                .doOnComplete(() -> System.out.println("Proceso de generación de todas las métricas completado exitosamente"))
+                .doOnError(error -> System.err.println("Error en generateAllMetrics: " + error.getMessage()))
+                .then();
     }
 
-    private Flux<Document> getProviderResults() {
+    /**
+     * Genera métricas generales por proveedor para el día actual
+     */
+    public Flux<Metrics> generateMetricsGeneral() {
+        System.out.println("Iniciando cálculo de totalSales por proveedor para la fecha actual...");
+
+        // Obtenemos la fecha actual en el formato correcto
+        LocalDate today = LocalDate.now();
+        LocalDateTime startOfDay = today.atStartOfDay();
+        LocalDateTime endOfDay = today.atTime(23, 59, 59);
+
+        System.out.println("Filtrando KPIs entre: " + startOfDay + " y " + endOfDay);
+
+        // Primero obtenemos todos los providers
+        return reactiveMongoTemplate.findAll(Provider.class)
+                .flatMap(provider -> {
+                    // Extraemos los datos del provider
+                    String providerId = provider.getProviderId();
+                    String providerName = provider.getName();
+
+                    System.out.println("Procesando proveedor: " + providerId + " - " + providerName);
+
+                    // Criterio para buscar campañas relacionadas con este providerId
+                    Query campaignsQuery = Query.query(Criteria.where("providerId").is(providerId));
+
+                    return reactiveMongoTemplate.find(campaignsQuery, Campaign.class)
+                            .collectList()
+                            .flatMap(campaigns -> {
+                                if (campaigns.isEmpty()) {
+                                    System.out.println("No se encontraron campañas para el proveedor: " + providerId);
+                                    return createEmptyMetrics(providerId);
+                                }
+
+                                // Extraemos los campaignId de las campañas encontradas
+                                List<String> campaignIds = campaigns.stream()
+                                        .map(Campaign::getCampaignId)
+                                        .filter(id -> id != null && !id.isBlank())
+                                        .collect(Collectors.toList());
+
+                                System.out.println("Proveedor: " + providerId + " | Campañas encontradas: " +
+                                        campaigns.size() + " | IDs válidos: " + campaignIds.size());
+
+                                if (campaignIds.isEmpty()) {
+                                    System.out.println("No hay campaignIds válidos para el proveedor: " + providerId);
+                                    return createEmptyMetrics(providerId);
+                                }
+
+                                // Criterio para KPIs por campaignIds, fecha y tipos específicos de KPI
+                                Criteria kpiCriteria = Criteria.where("campaignId").in(campaignIds)
+                                        .and("kpiId").in(Arrays.asList("MP-V", "PW-V", "PA-V"))
+                                        .and("createdDate").gte(startOfDay).lte(endOfDay);
+
+                                // Agregación para sumar los valores de KPI
+                                Aggregation aggregation = Aggregation.newAggregation(
+                                        Aggregation.match(kpiCriteria),
+                                        Aggregation.group().sum("value").as("totalSales")
+                                );
+
+                                return reactiveMongoTemplate.aggregate(
+                                                aggregation,
+                                                "kpi",
+                                                Document.class
+                                        )
+                                        .next()
+                                        .map(result -> {
+                                            Double totalSales = extractTotalSales(result);
+                                            return createMetricsObject(providerId, totalSales);
+                                        })
+                                        .switchIfEmpty(createEmptyMetrics(providerId));
+                            });
+                })
+                .doOnNext(metrics -> {
+                    System.out.println("Calculado - Proveedor ID: " + metrics.getProviderId() +
+                            " | Total Ventas del día: " + metrics.getTotalSales());
+                })
+                .flatMap(metrics -> {
+                    LocalDateTime now = LocalDateTime.now();
+                    LocalDateTime startOfDayx = now.toLocalDate().atStartOfDay();
+                    LocalDateTime endOfDayx = now.toLocalDate().atTime(23, 59, 59);
+
+                    return findMetricsByProviderIdAndDate(metrics.getProviderId(), startOfDayx, endOfDayx)
+                            .flatMap(existingMetric -> {
+                                existingMetric.setTotalSales(metrics.getTotalSales());
+                                existingMetric.setUpdatedDate(now);
+                                return reactiveMongoTemplate.save(existingMetric);
+                            })
+                            .switchIfEmpty(
+                                    Mono.fromCallable(() -> {
+                                        metrics.setCreatedUser("-");
+                                        metrics.setCreatedDate(now);
+                                        metrics.setUpdatedDate(now);
+                                        return metrics;
+                                    }).flatMap(reactiveMongoTemplate::save)
+                            );
+                })
+                .doOnComplete(() -> System.out.println("Proceso de cálculo de métricas generales completado"))
+                .doOnError(error -> System.err.println("Error en generateMetricsGeneral: " + error.getMessage()));
+    }
+
+    /**
+     * Obtiene métricas de inversión para el período actual
+     */
+    public Flux<Metrics> generateInvestmentMetrics() {
+        System.out.println("Iniciando cálculo de métricas de inversión...");
 
         List<Document> pipeline = Arrays.asList(
-                new Document("$lookup",
-                        new Document("from", "campaigns")
-                                .append("localField", "providerId")
-                                .append("foreignField", "providerId")
-                                .append("as", "activeCampaigns")
-                ),
-                new Document("$addFields",
-                        new Document("totalActiveCampaigns",
-                                new Document("$size", "$activeCampaigns")
-                        )
-                ),
                 new Document("$lookup",
                         new Document("from", "campaigns")
                                 .append("let",
@@ -803,11 +893,9 @@ public class KpiRepositoryImpl implements KpiRepository{
                                         new Document("$match",
                                                 new Document("$expr",
                                                         new Document("$and", Arrays.asList(
-                                                                //new Document("$eq", Arrays.asList("$providerId", "$$providerId")),
-                                                                // Convertir ambos a String para la comparación
                                                                 new Document("$eq", Arrays.asList(
-                                                                                new Document("$toString", "$providerId"),  // Convertir providerId de campaña a String
-                                                                                new Document("$toString", "$$providerId")  // Convertir el providerId de la variable let a String
+                                                                        new Document("$toString", "$providerId"),
+                                                                        new Document("$toString", "$$providerId")
                                                                 )),
                                                                 new Document("$lte", Arrays.asList("$startDate", new Date())),
                                                                 new Document("$gte", Arrays.asList("$endDate", new Date()))
@@ -821,70 +909,134 @@ public class KpiRepositoryImpl implements KpiRepository{
                                 ))
                                 .append("as", "investmentData")
                 ),
-                new Document("$lookup",
-                        new Document("from", "kpi")
-                                .append("let",
-                                        new Document("providerId", "$providerId")
-                                )
-                                .append("pipeline", Arrays.asList(
-                                        new Document("$lookup",
-                                                new Document("from", "campaigns")
-                                                        .append("localField", "campaignId")
-                                                        .append("foreignField", "campaignId")
-                                                        .append("as", "campaign")
-                                        ),
-                                        new Document("$unwind", "$campaign"),
-                                        new Document("$match",
-                                                new Document("$expr",
-                                                        new Document("$and", Arrays.asList(
-                                                                new Document("$lte", Arrays.asList("$campaign.startDate", new Date())),
-                                                                new Document("$gte", Arrays.asList("$campaign.endDate", new Date())),
-                                                                //new Document("$eq", Arrays.asList("$campaign.providerId", "$$providerId")),
-                                                                // Convertir a String ambos providerId
-                                                                new Document("$eq", Arrays.asList(
-                                                                              new Document("$toString", "$campaign.providerId"), // Convertir a String
-                                                                              new Document("$toString", "$$providerId")         // Convertir a String
-                                                                )),
-                                                                new Document("$in", Arrays.asList("$kpiId", Arrays.asList("MP-V", "PW-V", "PA-V")))
-                                                        ))
-                                                )
-                                        ),
-                                        new Document("$group",
-                                                new Document("_id", "$campaign.providerId")
-                                                        .append("totalSales", new Document("$sum", "$value"))
-                                        )
-                                ))
-                                .append("as", "salesData")
-                ),
                 new Document("$addFields",
                         new Document("totalInvestmentPeriod",
                                 new Document("$ifNull", Arrays.asList(
                                         new Document("$arrayElemAt", Arrays.asList("$investmentData.totalInvestmentPeriod", 0)), 0))
                         )
-                                .append("totalSales",
-                                        new Document("$ifNull", Arrays.asList(
-                                                new Document("$arrayElemAt", Arrays.asList("$salesData.totalSales", 0)), 0))
-                                )
-                ),
-                new Document("$group",
-                        //new Document("_id", "$providerId")
-                        new Document("_id", new Document("$toString", "$providerId"))  // Convierte providerId a String para _id
-                                .append("totalActiveCampaigns", new Document("$first", "$totalActiveCampaigns"))
-                                .append("totalInvestmentPeriod", new Document("$first", "$totalInvestmentPeriod"))
-                                .append("totalSales", new Document("$first", "$totalSales"))
                 ),
                 new Document("$project",
                         new Document("_id", 0)
-                                .append("providerId", "$_id")
-                                //.append("providerId", new Document("$toString", "$_id"))  // Convierte _id a String y lo renombra como providerId
-                                .append("totalActiveCampaigns", 1)
+                                .append("providerId", new Document("$toString", "$providerId"))
                                 .append("totalInvestmentPeriod", new Document("$toDouble", "$totalInvestmentPeriod"))
-                                .append("totalSales", new Document("$toDouble", "$totalSales"))
                 )
         );
-        return reactiveMongoTemplate.getCollection("campaigns")
-                .flatMapMany(collection -> collection.aggregate(pipeline,  Document.class));
 
+        return reactiveMongoTemplate.getCollection("providers")
+                .flatMapMany(collection -> collection.aggregate(pipeline, Document.class))
+                .flatMap(this::saveOrUpdateInvestmentMetric)
+                .doOnComplete(() -> System.out.println("Proceso de cálculo de métricas de inversión completado"))
+                .doOnError(error -> System.err.println("Error en generateInvestmentMetrics: " + error.getMessage()));
+    }
+
+
+    /**
+     * Extrae el valor totalSales del resultado de la agregación
+     */
+    private Double extractTotalSales(Document result) {
+        Object totalSalesObj = result.get("totalSales");
+        double totalSales = 0.0;
+
+        if (totalSalesObj != null) {
+            if (totalSalesObj instanceof Double) {
+                totalSales = (Double) totalSalesObj;
+            } else if (totalSalesObj instanceof Integer) {
+                totalSales = ((Integer) totalSalesObj).doubleValue();
+            } else if (totalSalesObj instanceof Long) {
+                totalSales = ((Long) totalSalesObj).doubleValue();
+            }
+        }
+
+        return totalSales;
+    }
+
+    /**
+     * Crea un objeto Metrics vacío para un proveedor
+     */
+    private Mono<Metrics> createEmptyMetrics(String providerId) {
+        Metrics metrics = Metrics.builder()
+                .providerId(providerId)
+                .totalSales(0.0)
+                .build();
+        return Mono.just(metrics);
+    }
+
+    /**
+     * Crea un objeto Metrics con los valores calculados
+     */
+    private Metrics createMetricsObject(String providerId, Double totalSales) {
+        return Metrics.builder()
+                .providerId(providerId)
+                .totalSales(totalSales)
+                .build();
+    }
+
+    /**
+     * Busca métricas existentes por providerId y fecha
+     */
+    private Mono<Metrics> findMetricsByProviderIdAndDate(String providerId, LocalDateTime startDate, LocalDateTime endDate) {
+        Query query = new Query();
+        query.addCriteria(Criteria.where("providerId").is(providerId)
+                .and("createdDate").gte(startDate).lte(endDate));
+        return reactiveMongoTemplate.findOne(query, Metrics.class);
+    }
+
+    /**
+     * Guarda o actualiza métricas de inversión
+     */
+    private Mono<Metrics> saveOrUpdateInvestmentMetric(Document document) {
+        String providerId = document.getString("providerId");
+        Double totalInvestmentPeriod = document.getDouble("totalInvestmentPeriod");
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime startOfDay = now.toLocalDate().atStartOfDay();
+        LocalDateTime endOfDay = now.toLocalDate().atTime(23, 59, 59);
+
+        return findMetricsByProviderIdAndDate(providerId, startOfDay, endOfDay)
+                .flatMap(existingMetric -> {
+                    existingMetric.setTotalInvestmentPeriod(totalInvestmentPeriod);
+                    existingMetric.setUpdatedDate(now);
+                    return reactiveMongoTemplate.save(existingMetric);
+                })
+                .switchIfEmpty(
+                        Mono.fromCallable(() -> {
+                            Metrics newMetrics = new Metrics();
+                            newMetrics.setProviderId(providerId);
+                            newMetrics.setTotalInvestmentPeriod(totalInvestmentPeriod);
+                            newMetrics.setCreatedUser("-");
+                            newMetrics.setCreatedDate(now);
+                            newMetrics.setUpdatedDate(now);
+                            return newMetrics;
+                        }).flatMap(reactiveMongoTemplate::save)
+                );
+    }
+
+    /**
+     * Guarda o actualiza métricas de ventas
+     */
+    private Mono<Metrics> saveOrUpdateSalesMetric(Document document) {
+        String providerId = document.getString("providerId");
+        Double totalSales = document.getDouble("totalSales");
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime startOfDay = now.toLocalDate().atStartOfDay();
+        LocalDateTime endOfDay = now.toLocalDate().atTime(23, 59, 59);
+
+        return findMetricsByProviderIdAndDate(providerId, startOfDay, endOfDay)
+                .flatMap(existingMetric -> {
+                    existingMetric.setTotalSales(totalSales);
+                    existingMetric.setUpdatedDate(now);
+                    return reactiveMongoTemplate.save(existingMetric);
+                })
+                .switchIfEmpty(
+                        Mono.fromCallable(() -> {
+                            Metrics newMetrics = new Metrics();
+                            newMetrics.setProviderId(providerId);
+                            newMetrics.setTotalSales(totalSales);
+                            newMetrics.setCreatedUser("-");
+                            newMetrics.setCreatedDate(now);
+                            newMetrics.setUpdatedDate(now);
+                            return newMetrics;
+                        }).flatMap(reactiveMongoTemplate::save)
+                );
     }
 
     private Mono<Kpi> saveOrUpdateKpi(Kpi kpi) {

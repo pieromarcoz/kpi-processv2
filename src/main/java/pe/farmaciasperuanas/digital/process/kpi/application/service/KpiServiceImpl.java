@@ -38,27 +38,27 @@ public class KpiServiceImpl implements KpiService{
 
     @Override
     public Mono<Map<String, Object>> generateKpiFromSalesforceData() {
-        return processImpressionsParent()
-                .then(processShippingScopeParent())
-                .then(processClicksParent())
-                .then(processImpressionsPushParent())
-                .then(processShippingScopePushParent())
-                .then(processSalesParent())
-                .then(processTransactionsParent())
-                .then(processSessionsParent())
-                .then(processSalesPushParent())
-                .then(processTransactionsPushParent())
-                .then(processSessionsPushParent())
-                .then(processSalesByFormat())
-                .then(processTransactionsByFormat())
-                .then(processSessionsByFormat())
-                .then(processClicksByFormat())
-                .then(processOpenRateParent())
-                .then(processCrParent())
-                .then(processClickRateByFormat())
-                .then(processOpenRatePushParent())
-                .then(processRoasGeneral()) 
-                .then(processMetricsGeneral())
+        return generateAllMetrics()
+//                .then(processImpressionsParent())
+//                .then(processShippingScopeParent())
+//                .then(processClicksParent())
+//                .then(processImpressionsPushParent())
+//                .then(processShippingScopePushParent())
+//                .then(processSalesParent())
+//                .then(processTransactionsParent())
+//                .then(processSessionsParent())
+//                .then(processSalesPushParent())
+//                .then(processTransactionsPushParent())
+//                .then(processSessionsPushParent())
+//                .then(processSalesByFormat())
+//                .then(processTransactionsByFormat())
+//                .then(processSessionsByFormat())
+//                .then(processClicksByFormat())
+//                .then(processOpenRateParent())
+//                .then(processCrParent())
+//                .then(processClickRateByFormat())
+//                .then(processOpenRatePushParent())
+//                .then(processRoasGeneral())
                 .then(Mono.just(new HashMap<String, Object>() {{
                     put("message", "Proceso completado con éxito");
                     put("status", "success");
@@ -185,10 +185,18 @@ public class KpiServiceImpl implements KpiService{
                 .then();
     }
 
-    public Mono<Void> processMetricsGeneral() {
-        return Flux.defer(() -> kpiRepository.generateMetricsGeneral())
-                .doOnNext(metrics -> System.out.println("Procesando Metrics General: " + metrics))
-                .then();
+//    public Mono<Void> processMetricsGeneral() {
+//        return Flux.defer(() -> kpiRepository.generateMetricsGeneral())
+//                .doOnNext(metrics -> System.out.println("Procesando Metrics General: " + metrics))
+//                .then();
+//    }
+//
+    public Mono<Void> generateAllMetrics() {
+        return Mono.defer(() -> kpiRepository.generateAllMetrics())
+                .doOnSuccess(unused -> System.out.println("Procesamiento completo de todas las métricas"))
+                .onErrorResume(error -> {
+                    System.err.println("Error al procesar métricas: " + error.getMessage());
+                    return Mono.empty();
+                });
     }
-
 }

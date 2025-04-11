@@ -2,9 +2,11 @@ package pe.farmaciasperuanas.digital.process.kpi.domain.port.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.data.mongodb.core.aggregation.Aggregation;
 import org.springframework.data.mongodb.core.aggregation.AggregationOperation;
+import org.springframework.data.mongodb.core.aggregation.ArithmeticOperators;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.stereotype.Service;
 import pe.farmaciasperuanas.digital.process.kpi.infrastructure.RetryHandler;
@@ -97,49 +99,90 @@ public class MongoDbAggregationService {
     /**
      * Calcula la inversión para una campaña y formato específico
      */
-    public Mono<Double> calculateInvestment(String campaignId, String formatCode) {
-        AggregationOperation[] operations = {
-                Aggregation.match(Criteria.where("campaignId").is(campaignId)
-                        .and("format").is(formatCode)),
-                Aggregation.group().sum("investment").as("value")
-        };
+    public Mono<Double> calculateInvestment(String campaignId, String formatCode, String providerId, String campaignSubId) {
 
         // Determinar la colección adecuada según el formato
         String collection;
         if ("CM".equals(formatCode) || "VM".equals(formatCode)) {
-            collection = "meta_metrics";
+            collection = "bq_analytics_slayer_ads_meta_metricas";
         } else {
-            collection = "google_metrics";
+            collection = "bq_analytics_slayer_ads_google_metricas";
         }
 
-        return executeAggregation(collection, operations, Map.class, "value")
-                .doOnSuccess(value -> log.debug("Inversión calculada para campaña {}, formato {}: {}",
-                        campaignId, formatCode, value));
-    }
+        // Definir las operaciones de agregación para hacer el join con Campaigns
+        AggregationOperation[] operations = {
+                // Hacer join directamente con la colección de campaigns usando campaignSubId
+                Aggregation.lookup("campaigns", "campaignSubId", "campaignSubId", "campaignData"),
 
-    /**
+                // Desenrollar los resultados del lookup
+                Aggregation.unwind("campaignData", true),
+
+                // Filtrar por providerId
+                Aggregation.match(Criteria.where("campaignData.providerId").is(providerId)),
+
+                // Agrupar y sumar la inversión
+                Aggregation.group().sum("Inversion_3_75").as("totalInversion"),
+
+                // Proyectar con la división: SUM(Inversion_3_75)/0.40
+                Aggregation.project()
+                        .and(ArithmeticOperators.Divide.valueOf("totalInversion").divideBy(0.40))
+                        .as("Inversion")
+        };
+
+        return executeAggregation(collection, operations, Map.class, "Inversion")
+                .doOnSuccess(value -> log.debug("Inversión calculada para campaña {}, formato {}, proveedor {}: {}",
+                        campaignId, formatCode, providerId, value))
+                .defaultIfEmpty(0.0)
+                .onErrorResume(e -> {
+                    log.error("Error calculando inversión para campaña {}: {}", campaignId, e.getMessage(), e);
+                    return Mono.just(0.0);
+                });
+    }
+     /**
      * Calcula el alcance para una campaña y formato específico
      */
-    public Mono<Double> calculateReach(String campaignId, String formatCode) {
+    public Mono<Double> calculateReach(String campaignId, String formatCode, String providerId, String campaignSubId) {
         String collection;
 
         // Determinar la colección adecuada según el formato
         if ("CM".equals(formatCode) || "VM".equals(formatCode)) {
-            collection = "meta_metrics";
+            collection = "bq_analytics_slayer_ads_meta_alcance";
         } else {
-            collection = "google_metrics";
+            collection = "bq_analytics_slayer_ads_google_alcance";
         }
 
+        log.debug("Buscando alcance para campaña ID: {}, SubID: {}, ProveedorID: {}",
+                campaignId, campaignSubId, providerId);
+
+        // Definir las operaciones de agregación para hacer el join con Campaigns
         AggregationOperation[] operations = {
-                Aggregation.match(Criteria.where("campaignId").is(campaignId)
-                        .and("format").is(formatCode)),
-                Aggregation.group().sum("reach").as("value")
+                // Buscar documentos donde el campaignSubId coincida
+                Aggregation.match(Criteria.where("campaignSubId").is(campaignSubId)),
+                // Hacer lookup (join) con la colección Campaigns
+                Aggregation.lookup("campaigns", "campaignSubId", "campaignSubId", "campaignData"),
+                // Desenrollar los resultados del lookup
+                Aggregation.unwind("campaignData"),
+                // Filtrar por providerId en la colección Campaigns
+                Aggregation.match(Criteria.where("campaignData.providerId").is(providerId)),
+                // Ordenar por fecha de proceso descendente
+                Aggregation.sort(Sort.Direction.DESC, "Date"),
+                // Limitar a un solo registro (el más reciente)
+                Aggregation.limit(1),
+                // Proyectar solo el campo de alcance
+                Aggregation.project().and("Alcance").as("value")
         };
 
         return executeAggregation(collection, operations, Map.class, "value")
-                .doOnSuccess(value -> log.debug("Alcance calculado para campaña {}, formato {}: {}",
-                        campaignId, formatCode, value));
+                .doOnSuccess(value -> log.debug("Alcance calculado para campaña {}, formato {}, proveedor {}: {}",
+                        campaignId, formatCode, providerId, value))
+                .defaultIfEmpty(0.0)
+                .onErrorResume(e -> {
+                    log.error("Error calculando alcance para campaña {}: {}", campaignId, e.getMessage(), e);
+                    return Mono.just(0.0);
+                });
     }
+
+
 
     /**
      * Calcula las impresiones para una campaña y formato específico
@@ -238,26 +281,41 @@ public class MongoDbAggregationService {
     /**
      * Calcula las sesiones para una campaña y formato específico
      */
-    public Mono<Double> calculateSessions(String campaignId, String formatCode) {
+    public Mono<Double> calculateSessions(String campaignId, String formatCode, String providerId, String campaignSubId) {
         String collection;
 
         if ("CM".equals(formatCode) || "VM".equals(formatCode)) {
-            collection = "meta_metrics";
+            collection = "bq_analytics_slayer_ads_ga4_meta_tiktok";
         } else {
-            collection = "google_metrics";
+            collection = "bq_analytics_slayer_ads_ga4_meta_tiktok";
         }
 
+        // Definir las operaciones de agregación para hacer el join con Campaigns
         AggregationOperation[] operations = {
-                Aggregation.match(
-                        Criteria.where("campaignId").is(campaignId)
-                                .and("format").is(formatCode)
-                ),
-                Aggregation.group().sum("sessions").as("value")
+                // Buscar documentos donde el campaignSubId coincida
+                Aggregation.match(Criteria.where("campaignSubId").is(campaignSubId)),
+                // Hacer lookup (join) con la colección Campaigns
+                Aggregation.lookup("campaigns", "campaignSubId", "campaignSubId", "campaignData"),
+                // Desenrollar los resultados del lookup
+                Aggregation.unwind("campaignData"),
+                // Filtrar por providerId en la colección Campaigns
+                Aggregation.match(Criteria.where("campaignData.providerId").is(providerId)),
+                // Ordenar por fecha de proceso descendente
+                Aggregation.sort(Sort.Direction.DESC, "Date"),
+                // Limitar a un solo registro (el más reciente)
+                Aggregation.limit(1),
+                // Proyectar solo el campo de Sesiones
+                Aggregation.project().and("Sessions").as("value")
         };
 
         return executeAggregation(collection, operations, Map.class, "value")
-                .doOnSuccess(value -> log.debug("Sesiones calculadas para campaña {}, formato {}: {}",
-                        campaignId, formatCode, value));
+                .doOnSuccess(value -> log.debug("Sesiones calculado para campaña {}, formato {}, proveedor {}: {}",
+                        campaignId, formatCode, providerId, value))
+                .defaultIfEmpty(0.0)
+                .onErrorResume(e -> {
+                    log.error("Error calculando sesiones para campaña {}: {}", campaignId, e.getMessage(), e);
+                    return Mono.just(0.0);
+                });
     }
 
     /**
