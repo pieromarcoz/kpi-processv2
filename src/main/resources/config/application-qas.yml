@@ -1,0 +1,3 @@
+route-secret: secret-fapeconnect-qas
+route-secret-endpoint: https://qas-secret-manager-ws.solucionestifps.com/api/v1/secret
+app-key: secretManagerId
