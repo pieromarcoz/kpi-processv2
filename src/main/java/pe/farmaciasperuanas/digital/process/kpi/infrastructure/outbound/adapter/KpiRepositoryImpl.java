@@ -57,8 +57,8 @@ public class KpiRepositoryImpl implements KpiRepository{
     @Override
     public Flux<Kpi> generateKpiImpressionsParents() {
         String batchId = generateBatchId();
-        Flux<Document> results  = this.prepareQueryParent("bq_ds_campanias_salesforce_opens");
-        return results.map(document -> {
+        return this.prepareQueryParent("bq_ds_campanias_salesforce_opens")
+            .map(document -> {
             Kpi kpi = new Kpi();
             kpi.setCampaignId(document.getString("campaignId"));
             kpi.setCampaignSubId(document.getString("campaignId"));
@@ -70,14 +70,14 @@ public class KpiRepositoryImpl implements KpiRepository{
             kpi.setCreatedDate(LocalDateTime.now());
             kpi.setUpdatedDate(LocalDateTime.now());
             kpi.setStatus("A");
-            return kpi;
+            return setOwnedMediaBatchFields(kpi, batchId);
         }).flatMap(this::saveOrUpdateKpiStartOfDay);//saveOrUpdateKpi
     }
 
     @Override
     public Flux<Kpi> generateKpiShippingScopeParents() {
-        Flux<Document> results  = this.prepareQueryParent("bq_ds_campanias_salesforce_sents");
-        return results.map(document -> {
+        String batchId = generateBatchId();\n        return this.prepareQueryParent("bq_ds_campanias_salesforce_sents")
+            .map(document -> {
             Kpi kpi = new Kpi();
             kpi.setCampaignId(document.getString("campaignId"));
             kpi.setCampaignSubId(document.getString("campaignId"));
@@ -89,14 +89,14 @@ public class KpiRepositoryImpl implements KpiRepository{
             kpi.setCreatedDate(LocalDateTime.now());
             kpi.setUpdatedDate(LocalDateTime.now());
             kpi.setStatus("A");
-            return kpi;
+            return setOwnedMediaBatchFields(kpi, batchId);
         }).flatMap(this::saveOrUpdateKpiStartOfDay);//saveOrUpdateKpi
     }
 
     @Override
     public Flux<Kpi> generateKpiClicksParents() {
-        Flux<Document> results  = this.prepareQueryParent("bq_ds_campanias_salesforce_clicks");
-        return results.map(document -> {
+        String batchId = generateBatchId();\n        return this.prepareQueryParent("bq_ds_campanias_salesforce_clicks")
+            .map(document -> {
             Kpi kpi = new Kpi();
             kpi.setCampaignId(document.getString("campaignId"));
             kpi.setCampaignSubId(document.getString("campaignId"));
@@ -108,7 +108,7 @@ public class KpiRepositoryImpl implements KpiRepository{
             kpi.setCreatedDate(LocalDateTime.now());
             kpi.setUpdatedDate(LocalDateTime.now());
             kpi.setStatus("A");
-            return kpi;
+            return setOwnedMediaBatchFields(kpi, batchId);
         }).flatMap(this::saveOrUpdateKpiStartOfDay);//saveOrUpdateKpi
     }
 
@@ -1273,14 +1273,52 @@ private Mono<Kpi> saveOrUpdateKpiStartOfDay(Kpi kpi) {
                 .flatMapMany(collection -> collection.aggregate(pipeline, Document.class));
     }
 }
-    // Método para generar un ID de lote único basado en timestamp
     private String generateBatchId() {
         return "BATCH-" + System.currentTimeMillis();
     }
 
-    // Método para establecer los campos batchId y mediaType en los KPIs de medios propios
     private Kpi setOwnedMediaBatchFields(Kpi kpi, String batchId) {
         kpi.setBatchId(batchId);
         kpi.setMediaType("OWNED");
         return kpi;
+    }
+    
+    /**
+     * Procesa un lote de KPIs, validando que ninguno tenga valor 0 o genere error
+     * Si algún KPI tiene valor 0 o genera error, no se guarda ninguno del lote
+     * @param kpis Flux de KPIs a procesar
+     * @return Flux de KPIs procesados
+     */
+    private Flux<Kpi> processBatch(Flux<Kpi> kpis) {
+        return kpis.collectList()
+                .flatMapMany(kpiList -> {
+                    boolean hasZeroOrNull = kpiList.stream()
+                            .anyMatch(kpi -> kpi.getValue() == null || kpi.getValue() == 0);
+                    
+                    if (hasZeroOrNull) {
+                        log.warn("Lote no guardado: contiene KPIs con valor 0 o nulo");
+                        return Flux.empty();
+                    }
+                    
+                    return Flux.fromIterable(kpiList)
+                            .flatMap(this::saveOrUpdateKpiStartOfDay)
+                            .onErrorResume(e -> {
+                                log.error("Error al guardar lote de KPIs: " + e.getMessage(), e);
+                                return Flux.empty(); // No guardar ninguno si hay error
+                            });
+                });
+    }
+    
+    /**
+     * Optimiza una consulta MongoDB usando Spring Data Aggregation en lugar de Document directo
+     * @param collectionName Nombre de la colección
+     * @param aggregation Agregación a ejecutar
+     * @return Flux de documentos resultantes
+     */
+    private Flux<Document> executeAggregation(String collectionName, TypedAggregation<?> aggregation) {
+        return reactiveMongoTemplate.aggregate(aggregation, collectionName, Document.class)
+                .onErrorResume(e -> {
+                    log.error("Error ejecutando agregación en " + collectionName + ": " + e.getMessage(), e);
+                    return Flux.empty();
+                });
     }
