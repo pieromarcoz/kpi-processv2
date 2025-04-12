@@ -28,4 +28,6 @@ public class Kpi {
     private LocalDateTime createdDate;
     private LocalDateTime updatedDate;
     private String format;
+    private String batchId;        // Identificador del lote de procesamiento
+    private String mediaType;      // Tipo de medio: "OWNED" o "PAID"
 }

@@ -56,6 +56,7 @@ public class KpiRepositoryImpl implements KpiRepository{
 
     @Override
     public Flux<Kpi> generateKpiImpressionsParents() {
+        String batchId = generateBatchId();
         Flux<Document> results  = this.prepareQueryParent("bq_ds_campanias_salesforce_opens");
         return results.map(document -> {
             Kpi kpi = new Kpi();
@@ -1040,6 +1041,10 @@ public class KpiRepositoryImpl implements KpiRepository{
     }
 
     private Mono<Kpi> saveOrUpdateKpi(Kpi kpi) {
+        // No guardar KPIs con valor 0
+        if (kpi.getValue() != null && kpi.getValue() == 0) {
+            return Mono.empty();
+        }
         Query query = new Query()
                 .addCriteria(Criteria.where("kpiId").is(kpi.getKpiId())
                         .and("campaignId").is(kpi.getCampaignId())
@@ -1062,6 +1067,10 @@ public class KpiRepositoryImpl implements KpiRepository{
     }
 
 private Mono<Kpi> saveOrUpdateKpiStartOfDay(Kpi kpi) {
+    // No guardar KPIs con valor 0
+    if (kpi.getValue() != null && kpi.getValue() == 0) {
+        return Mono.empty();
+    }
     // Obtenemos la fecha actual sin la parte de la hora para comparar solo la fecha
     LocalDate currentDate = LocalDate.now();
     
@@ -1264,3 +1273,14 @@ private Mono<Kpi> saveOrUpdateKpiStartOfDay(Kpi kpi) {
                 .flatMapMany(collection -> collection.aggregate(pipeline, Document.class));
     }
 }
+    // Método para generar un ID de lote único basado en timestamp
+    private String generateBatchId() {
+        return "BATCH-" + System.currentTimeMillis();
+    }
+
+    // Método para establecer los campos batchId y mediaType en los KPIs de medios propios
+    private Kpi setOwnedMediaBatchFields(Kpi kpi, String batchId) {
+        kpi.setBatchId(batchId);
+        kpi.setMediaType("OWNED");
+        return kpi;
+    }
