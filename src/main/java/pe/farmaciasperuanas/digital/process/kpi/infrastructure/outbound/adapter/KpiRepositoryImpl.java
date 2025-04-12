@@ -64,7 +64,7 @@ public class KpiRepositoryImpl implements KpiRepository {
     private static final String OPERATION_ROAS = "ROAS";
 
     // Timeout para operaciones de base de datos lentas (30 segundos)
-    private static final Duration DB_OPERATION_TIMEOUT = Duration.ofSeconds(30);
+    private static final Duration DB_OPERATION_TIMEOUT = Duration.ofSeconds(120); // Increased from 30
 
     /**
      * Clase interna para métricas de rendimiento

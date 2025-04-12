@@ -105,11 +105,30 @@ public class MongoIndexConfig {
                 )
         ));
 
+
+        Map<String, IndexDefinition> sendjobsIndexes = new HashMap<>();
+        sendjobsIndexes.put("sendjobs_sendid_idx", new IndexDefinition(
+                "sendjobs_sendid_idx",
+                Map.of("SendID", Sort.Direction.ASC)
+        ));
+        sendjobsIndexes.put("sendjobs_campaignid_idx", new IndexDefinition(
+                "sendjobs_campaignid_idx",
+                Map.of("campaignId", Sort.Direction.ASC)
+        ));
+
+        Map<String, IndexDefinition> campaignsIndexes = new HashMap<>();
+        campaignsIndexes.put("campaigns_campaignid_idx", new IndexDefinition(
+                "campaigns_campaignid_idx",
+                Map.of("campaignId", Sort.Direction.ASC)
+        ));
+
         // Crear todos los índices definidos
         createCollectionIndexes("kpi", kpiIndexes)
                 .then(createCollectionIndexes("bq_ds_campanias_salesforce_clicks", clicksIndexes))
                 .then(createCollectionIndexes("bq_ds_campanias_salesforce_opens", opensIndexes))
                 .then(createCollectionIndexes("bq_ds_campanias_salesforce_push", pushIndexes))
+                .then(createCollectionIndexes("bq_ds_campanias_salesforce_sendjobs", sendjobsIndexes)) // Added sendjobs
+                .then(createCollectionIndexes("campaigns", campaignsIndexes)) // Added campaigns
                 .then(createCollectionIndexes("ga4_own_media", ga4Indexes))
                 .doOnSuccess(v -> log.info("Índices creados exitosamente"))
                 .doOnError(e -> log.error("Error creando índices: {}", e.getMessage()))
