@@ -1,0 +1,8 @@
+# IDE files
+.classpath
+.factorypath
+.project
+.settings/
+
+# Build artifacts
+target/
