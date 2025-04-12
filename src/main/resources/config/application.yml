@@ -4,7 +4,7 @@ spring:
   application:
     name: fps-bus-ms-process-kpi
   profiles:
-    active: ${PROFILE:qas}
+    active: ${PROFILE:dev}
   main:
     web-application-type: reactive
 logging:

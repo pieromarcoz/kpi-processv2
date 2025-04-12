@@ -17,7 +17,6 @@ import java.util.Map;
  * <b>Copyright</b>: &copy; 2025 Digital.<br/>
  * <b>Company</b>: Digital.<br/>
  *
-
  * <u>Developed by</u>: <br/>
  * <ul>
  * <li>Jorge Triana</li>
@@ -194,7 +193,7 @@ public class KpiServiceImpl implements KpiService{
                 .then();
     }
 
-//    public Mono<Void> processMetricsGeneral() {
+    //    public Mono<Void> processMetricsGeneral() {
 //        return Flux.defer(() -> kpiRepository.generateMetricsGeneral())
 //                .doOnNext(metrics -> System.out.println("Procesando Metrics General: " + metrics))
 //                .then();

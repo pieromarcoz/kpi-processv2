@@ -58,58 +58,60 @@ public class KpiRepositoryImpl implements KpiRepository{
     public Flux<Kpi> generateKpiImpressionsParents() {
         String batchId = generateBatchId();
         return this.prepareQueryParent("bq_ds_campanias_salesforce_opens")
-            .map(document -> {
-            Kpi kpi = new Kpi();
-            kpi.setCampaignId(document.getString("campaignId"));
-            kpi.setCampaignSubId(document.getString("campaignId"));
-            kpi.setKpiId("MP-I");
-            kpi.setKpiDescription("Impresiones (Aperturas)");
-            kpi.setValue(document.getDouble("value"));
-            kpi.setType("cantidad");
-            kpi.setCreatedUser("-");
-            kpi.setCreatedDate(LocalDateTime.now());
-            kpi.setUpdatedDate(LocalDateTime.now());
-            kpi.setStatus("A");
-            return setOwnedMediaBatchFields(kpi, batchId);
-        }).flatMap(this::saveOrUpdateKpiStartOfDay);//saveOrUpdateKpi
+                .map(document -> {
+                    Kpi kpi = new Kpi();
+                    kpi.setCampaignId(document.getString("campaignId"));
+                    kpi.setCampaignSubId(document.getString("campaignId"));
+                    kpi.setKpiId("MP-I");
+                    kpi.setKpiDescription("Impresiones (Aperturas)");
+                    kpi.setValue(document.getDouble("value"));
+                    kpi.setType("cantidad");
+                    kpi.setCreatedUser("-");
+                    kpi.setCreatedDate(LocalDateTime.now());
+                    kpi.setUpdatedDate(LocalDateTime.now());
+                    kpi.setStatus("A");
+                    return setOwnedMediaBatchFields(kpi, batchId);
+                }).flatMap(this::saveOrUpdateKpiStartOfDay);//saveOrUpdateKpi
     }
 
     @Override
     public Flux<Kpi> generateKpiShippingScopeParents() {
-        String batchId = generateBatchId();\n        return this.prepareQueryParent("bq_ds_campanias_salesforce_sents")
-            .map(document -> {
-            Kpi kpi = new Kpi();
-            kpi.setCampaignId(document.getString("campaignId"));
-            kpi.setCampaignSubId(document.getString("campaignId"));
-            kpi.setKpiId("MP-A");
-            kpi.setKpiDescription("Alcance (Envíos)");
-            kpi.setValue(document.getDouble("value"));
-            kpi.setType("cantidad");
-            kpi.setCreatedUser("-");
-            kpi.setCreatedDate(LocalDateTime.now());
-            kpi.setUpdatedDate(LocalDateTime.now());
-            kpi.setStatus("A");
-            return setOwnedMediaBatchFields(kpi, batchId);
-        }).flatMap(this::saveOrUpdateKpiStartOfDay);//saveOrUpdateKpi
+        String batchId = generateBatchId();
+        return this.prepareQueryParent("bq_ds_campanias_salesforce_sents")
+                .map(document -> {
+                    Kpi kpi = new Kpi();
+                    kpi.setCampaignId(document.getString("campaignId"));
+                    kpi.setCampaignSubId(document.getString("campaignId"));
+                    kpi.setKpiId("MP-A");
+                    kpi.setKpiDescription("Alcance (Envíos)");
+                    kpi.setValue(document.getDouble("value"));
+                    kpi.setType("cantidad");
+                    kpi.setCreatedUser("-");
+                    kpi.setCreatedDate(LocalDateTime.now());
+                    kpi.setUpdatedDate(LocalDateTime.now());
+                    kpi.setStatus("A");
+                    return setOwnedMediaBatchFields(kpi, batchId);
+                }).flatMap(this::saveOrUpdateKpiStartOfDay);//saveOrUpdateKpi
     }
 
     @Override
     public Flux<Kpi> generateKpiClicksParents() {
-        String batchId = generateBatchId();\n        return this.prepareQueryParent("bq_ds_campanias_salesforce_clicks")
-            .map(document -> {
-            Kpi kpi = new Kpi();
-            kpi.setCampaignId(document.getString("campaignId"));
-            kpi.setCampaignSubId(document.getString("campaignId"));
-            kpi.setKpiId("MP-C");
-            kpi.setKpiDescription("Clicks");
-            kpi.setValue(document.getDouble("value"));
-            kpi.setType("cantidad");
-            kpi.setCreatedUser("-");
-            kpi.setCreatedDate(LocalDateTime.now());
-            kpi.setUpdatedDate(LocalDateTime.now());
-            kpi.setStatus("A");
-            return setOwnedMediaBatchFields(kpi, batchId);
-        }).flatMap(this::saveOrUpdateKpiStartOfDay);//saveOrUpdateKpi
+        String batchId = generateBatchId();
+        return this.prepareQueryParent("bq_ds_campanias_salesforce_clicks")
+                .map(document -> {
+                    Kpi kpi = new Kpi();
+                    kpi.setCampaignId(document.getString("campaignId"));
+                    kpi.setCampaignSubId(document.getString("campaignId"));
+                    kpi.setKpiId("MP-C");
+                    kpi.setKpiDescription("Clicks");
+                    kpi.setValue(document.getDouble("value"));
+                    kpi.setType("cantidad");
+                    kpi.setCreatedUser("-");
+                    kpi.setCreatedDate(LocalDateTime.now());
+                    kpi.setUpdatedDate(LocalDateTime.now());
+                    kpi.setStatus("A");
+                    return setOwnedMediaBatchFields(kpi, batchId);
+                }).flatMap(this::saveOrUpdateKpiStartOfDay);//saveOrUpdateKpi
     }
 
     @Override
@@ -642,12 +644,12 @@ public class KpiRepositoryImpl implements KpiRepository{
 
         return reactiveMongoTemplate.aggregate(aggregation, "kpi", Kpi.class)
                 .flatMap(c -> {
-                        try {
-                    c.setKpiId(c.getFormat() + "R");
-                    c.setKpiDescription("Click Rate");
-                    c.setType("porcentaje");
-                    return this.upsertKpi(c);
-                } catch (Exception e) {
+                    try {
+                        c.setKpiId(c.getFormat() + "R");
+                        c.setKpiDescription("Click Rate");
+                        c.setType("porcentaje");
+                        return this.upsertKpi(c);
+                    } catch (Exception e) {
                         // Manejo de la excepción
                         log.error("Error procesando el KPI: " + c, e);
                         // Dependiendo de tus necesidades, puedes devolver un Mono vacío, un valor por defecto, etc.
@@ -664,14 +666,14 @@ public class KpiRepositoryImpl implements KpiRepository{
                 Aggregation.group("campaignId")
                         .sum(
                                 AggregationExpression.from(
-                                     MongoExpression.create("""                         
+                                        MongoExpression.create("""                         
                                          $cond: [
                                                 { $eq: ["$kpiId", "PA-I"] },
                                                 "$value",
                                                 0.0
                                           ]
                         """)
-                        )
+                                )
                         ).as("sumPAI")
                         .sum(
                                 AggregationExpression.from(
@@ -682,12 +684,12 @@ public class KpiRepositoryImpl implements KpiRepository{
                                                   0.0
                                                 ]
                         """)
-                        )
+                                )
                         ).as("sumPAA"),
                 Aggregation.addFields()
                         .addField("value")
                         .withValue(
-                                AggregationExpression.from(                                   
+                                AggregationExpression.from(
                                         MongoExpression.create("""                                       
                                         $cond: {
 
@@ -1066,39 +1068,39 @@ public class KpiRepositoryImpl implements KpiRepository{
                 .thenReturn(kpi);
     }
 
-private Mono<Kpi> saveOrUpdateKpiStartOfDay(Kpi kpi) {
-    // No guardar KPIs con valor 0
-    if (kpi.getValue() != null && kpi.getValue() == 0) {
-        return Mono.empty();
+    private Mono<Kpi> saveOrUpdateKpiStartOfDay(Kpi kpi) {
+        // No guardar KPIs con valor 0
+        if (kpi.getValue() != null && kpi.getValue() == 0) {
+            return Mono.empty();
+        }
+        // Obtenemos la fecha actual sin la parte de la hora para comparar solo la fecha
+        LocalDate currentDate = LocalDate.now();
+
+        // Consulta para encontrar el documento con el mismo kpiId, campaignId y campaignSubId
+        Query query = new Query()
+                .addCriteria(Criteria.where("kpiId").is(kpi.getKpiId())
+                        .and("campaignId").is(kpi.getCampaignId())
+                        .and("campaignSubId").is(kpi.getCampaignSubId())
+                        .and("createdDate").gte(currentDate.atStartOfDay()) // Filtrar por fecha actual (sin la parte de hora)
+                        .lt(currentDate.plusDays(1).atStartOfDay())); // Filtrar por el final del día actual (hasta las 23:59)
+
+        // Si el registro ya existe para hoy, se actualiza. Si no, se inserta un nuevo registro.
+        Update update = new Update()
+                .set("campaignId", kpi.getCampaignId())
+                .set("campaignSubId", kpi.getCampaignSubId())
+                .set("kpiId", kpi.getKpiId())
+                .set("kpiDescription", kpi.getKpiDescription())
+                .set("type", kpi.getType())
+                .set("value", kpi.getValue())
+                .set("status", kpi.getStatus())
+                .set("createdUser", kpi.getCreatedUser())
+                .set("createdDate", kpi.getCreatedDate())
+                .set("updatedDate", LocalDateTime.now()); // Asigna la fecha y hora actuales a updatedDate
+
+        // Usamos upsert para que se actualice si existe o se cree un nuevo documento si no existe
+        return reactiveMongoTemplate.upsert(query, update, Kpi.class)
+                .thenReturn(kpi);
     }
-    // Obtenemos la fecha actual sin la parte de la hora para comparar solo la fecha
-    LocalDate currentDate = LocalDate.now();
-    
-    // Consulta para encontrar el documento con el mismo kpiId, campaignId y campaignSubId
-    Query query = new Query()
-            .addCriteria(Criteria.where("kpiId").is(kpi.getKpiId())
-                    .and("campaignId").is(kpi.getCampaignId())
-                    .and("campaignSubId").is(kpi.getCampaignSubId())
-                    .and("createdDate").gte(currentDate.atStartOfDay()) // Filtrar por fecha actual (sin la parte de hora)
-                    .lt(currentDate.plusDays(1).atStartOfDay())); // Filtrar por el final del día actual (hasta las 23:59)
-
-    // Si el registro ya existe para hoy, se actualiza. Si no, se inserta un nuevo registro.
-    Update update = new Update()
-            .set("campaignId", kpi.getCampaignId())
-            .set("campaignSubId", kpi.getCampaignSubId())
-            .set("kpiId", kpi.getKpiId())
-            .set("kpiDescription", kpi.getKpiDescription())
-            .set("type", kpi.getType())
-            .set("value", kpi.getValue())
-            .set("status", kpi.getStatus())
-            .set("createdUser", kpi.getCreatedUser())
-            .set("createdDate", kpi.getCreatedDate())
-            .set("updatedDate", LocalDateTime.now()); // Asigna la fecha y hora actuales a updatedDate
-
-    // Usamos upsert para que se actualice si existe o se cree un nuevo documento si no existe
-    return reactiveMongoTemplate.upsert(query, update, Kpi.class)
-            .thenReturn(kpi);
-}
 
     private Mono<Kpi> upsertKpi(Kpi kpi) {
         Query query = Query.query(Criteria.where("kpiId").is(kpi.getKpiId())
@@ -1272,7 +1274,6 @@ private Mono<Kpi> saveOrUpdateKpiStartOfDay(Kpi kpi) {
         return reactiveMongoTemplate.getCollection("ga4_own_media")
                 .flatMapMany(collection -> collection.aggregate(pipeline, Document.class));
     }
-}
     private String generateBatchId() {
         return "BATCH-" + System.currentTimeMillis();
     }
@@ -1282,7 +1283,7 @@ private Mono<Kpi> saveOrUpdateKpiStartOfDay(Kpi kpi) {
         kpi.setMediaType("OWNED");
         return kpi;
     }
-    
+
     /**
      * Procesa un lote de KPIs, validando que ninguno tenga valor 0 o genere error
      * Si algún KPI tiene valor 0 o genera error, no se guarda ninguno del lote
@@ -1294,12 +1295,12 @@ private Mono<Kpi> saveOrUpdateKpiStartOfDay(Kpi kpi) {
                 .flatMapMany(kpiList -> {
                     boolean hasZeroOrNull = kpiList.stream()
                             .anyMatch(kpi -> kpi.getValue() == null || kpi.getValue() == 0);
-                    
+
                     if (hasZeroOrNull) {
                         log.warn("Lote no guardado: contiene KPIs con valor 0 o nulo");
                         return Flux.empty();
                     }
-                    
+
                     return Flux.fromIterable(kpiList)
                             .flatMap(this::saveOrUpdateKpiStartOfDay)
                             .onErrorResume(e -> {
@@ -1308,7 +1309,7 @@ private Mono<Kpi> saveOrUpdateKpiStartOfDay(Kpi kpi) {
                             });
                 });
     }
-    
+
     /**
      * Optimiza una consulta MongoDB usando Spring Data Aggregation en lugar de Document directo
      * @param collectionName Nombre de la colección
@@ -1322,3 +1323,4 @@ private Mono<Kpi> saveOrUpdateKpiStartOfDay(Kpi kpi) {
                     return Flux.empty();
                 });
     }
+}
