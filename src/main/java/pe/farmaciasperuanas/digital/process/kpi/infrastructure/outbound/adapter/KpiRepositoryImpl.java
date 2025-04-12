@@ -370,9 +370,97 @@ public class KpiRepositoryImpl implements KpiRepository {
 
     @Override
     public Flux<Kpi> generateKpiSalesParents() {
+        final String OPERATION_NAME = "SALES_PARENTS";
+        OperationMetrics metrics = startMetrics(OPERATION_NAME);
+        String fieldToSum = "totalRevenue"; // Corresponds to "Total revenue" in GA4
+        List<String> formats = Arrays.asList("MC", "MF", "MB"); // Formats for Mailing Parents
+        String batchId = generateBatchId();
+
+        return prepareQueryGa4ByFormat(fieldToSum, formats)
+                .collectList() // Collect all results for different formats/subIds of the same campaignId
+                .flatMapMany(list -> {
+                    Map<String, Double> salesByCampaign = list.stream()
+                            .collect(Collectors.groupingBy(
+                                    doc -> doc.getString("campaignId"), // Group only by campaignId
+                                    Collectors.summingDouble(doc -> doc.getDouble("value"))
+                            ));
+
+                    List<Kpi> kpis = new ArrayList<>();
+                    salesByCampaign.forEach((campaignId, totalSales) -> {
+                        Kpi kpi = new Kpi();
+                        kpi.setCampaignId(campaignId);
+                        kpi.setCampaignSubId(campaignId); // Parent KPI uses campaignId as subId
+                        kpi.setKpiId("MP-V"); // Sales Parent
+                        kpi.setKpiDescription("Venta - GA4 Medios Propios (Padre)");
+                        kpi.setType("moneda"); // Sales are currency
+                        kpi.setValue(totalSales);
+                        kpi.setStatus("A");
+                        kpi.setCreatedUser("-");
+                        kpi.setCreatedDate(LocalDateTime.now());
+                        kpi.setUpdatedDate(LocalDateTime.now());
+                        kpi.setBatchId(batchId);
+                        kpi.setMediaType("OWNED");
+
+                        kpis.add(kpi);
+                    });
+                    log.info("Calculated {} Sales Parent KPIs.", kpis.size());
+                    return Flux.fromIterable(kpis);
+                })
+                .flatMap(this::saveOrUpdateKpiStartOfDay)
+                .transform(flux -> trackMetrics(flux, metrics))
+                .transform(flux -> withErrorHandling(flux, OPERATION_NAME));
+    }
+
+
+    @Override
+    public Flux<Kpi> generateKpiSalesParents() {
         // Implementación original
         return Flux.empty();
     }
+
+    @Override
+    public Flux<Kpi> generateKpiTransactionsParents() {
+        final String OPERATION_NAME = "TRANSACTIONS_PARENTS";
+        OperationMetrics metrics = startMetrics(OPERATION_NAME);
+        String fieldToSum = "transactions"; // Corresponds to "Transaccions" in GA4
+        List<String> formats = Arrays.asList("MC", "MF", "MB"); // Formats for Mailing Parents
+        String batchId = generateBatchId();
+
+        return prepareQueryGa4ByFormat(fieldToSum, formats)
+                .collectList() // Collect all results for different formats/subIds of the same campaignId
+                .flatMapMany(list -> {
+                    Map<String, Double> transactionsByCampaign = list.stream()
+                            .collect(Collectors.groupingBy(
+                                    doc -> doc.getString("campaignId"), // Group only by campaignId
+                                    Collectors.summingDouble(doc -> doc.getDouble("value"))
+                            ));
+
+                    List<Kpi> kpis = new ArrayList<>();
+                    transactionsByCampaign.forEach((campaignId, totalTransactions) -> {
+                        Kpi kpi = new Kpi();
+                        kpi.setCampaignId(campaignId);
+                        kpi.setCampaignSubId(campaignId); // Parent KPI uses campaignId as subId
+                        kpi.setKpiId("MP-T"); // Transactions Parent
+                        kpi.setKpiDescription("Transacciones - GA4 Medios Propios (Padre)");
+                        kpi.setType("cantidad"); // Transactions are counts
+                        kpi.setValue(totalTransactions);
+                        kpi.setStatus("A");
+                        kpi.setCreatedUser("-");
+                        kpi.setCreatedDate(LocalDateTime.now());
+                        kpi.setUpdatedDate(LocalDateTime.now());
+                        kpi.setBatchId(batchId);
+                        kpi.setMediaType("OWNED");
+
+                        kpis.add(kpi);
+                    });
+                    log.info("Calculated {} Transactions Parent KPIs.", kpis.size());
+                    return Flux.fromIterable(kpis);
+                })
+                .flatMap(this::saveOrUpdateKpiStartOfDay)
+                .transform(flux -> trackMetrics(flux, metrics))
+                .transform(flux -> withErrorHandling(flux, OPERATION_NAME));
+    }
+
 
     @Override
     public Flux<Kpi> generateKpiTransactionsParents() {
@@ -382,9 +470,103 @@ public class KpiRepositoryImpl implements KpiRepository {
 
     @Override
     public Flux<Kpi> generateKpiSessionsParents() {
+        final String OPERATION_NAME = "SESSIONS_PARENTS";
+        OperationMetrics metrics = startMetrics(OPERATION_NAME);
+        String fieldToSum = "sessions";
+        List<String> formats = Arrays.asList("MC", "MF", "MB"); // Formats for Mailing Parents
+
+        String batchId = generateBatchId();
+
+        return prepareQueryGa4ByFormat(fieldToSum, formats)
+                .collectList() // Collect all results for different formats/subIds of the same campaignId
+                .flatMapMany(list -> {
+                    Map<String, Double> sessionsByCampaign = list.stream()
+                            .collect(Collectors.groupingBy(
+                                    doc -> doc.getString("campaignId"), // Group only by campaignId
+                                    Collectors.summingDouble(doc -> doc.getDouble("value"))
+                            ));
+
+                    List<Kpi> kpis = sessionsByCampaign.entrySet().stream()
+                            .map(entry -> {
+                                String campaignId = entry.getKey();
+                                Double totalValue = entry.getValue();
+
+                                Kpi kpi = new Kpi();
+                                kpi.setCampaignId(campaignId);
+                                kpi.setCampaignSubId(campaignId); // Parent KPI uses campaignId as subId
+                                kpi.setKpiId("MP-S"); // KPI ID for Parent Sessions
+                                kpi.setKpiDescription("Sesiones - GA4 (Padre)");
+                                kpi.setType("cantidad"); // Type is count
+                                kpi.setValue(totalValue);
+                                kpi.setStatus("A"); // Default status
+                                kpi.setCreatedUser("-"); // Default user
+                                kpi.setCreatedDate(LocalDateTime.now());
+                                kpi.setUpdatedDate(LocalDateTime.now());
+                                setOwnedMediaBatchFields(kpi, batchId);
+                                return kpi;
+                            })
+                            .collect(Collectors.toList());
+
+                    return Flux.fromIterable(kpis);
+                })
+                .flatMap(this::saveOrUpdateKpiStartOfDay) // Save each aggregated KPI
+                .transform(flux -> trackMetrics(flux, metrics)) // Track performance
+                .transform(flux -> withErrorHandling(flux, OPERATION_NAME)); // Handle errors
+    }
+
+
+    @Override
+    public Flux<Kpi> generateKpiSessionsParents() {
         // Implementación original
         return Flux.empty();
     }
+
+    @Override
+    public Flux<Kpi> generateKpiSalesPushParents() {
+        final String OPERATION_NAME = "SALES_PUSH_PARENTS";
+        OperationMetrics metrics = startMetrics(OPERATION_NAME);
+        String fieldToSum = "totalRevenue"; // Assuming field name in ga4_own_media
+
+        String batchId = generateBatchId();
+
+        return prepareQueryGa4PushParent(fieldToSum) // Uses helper for Push Parent logic
+                .collectList()
+                .flatMapMany(list -> {
+                    Map<String, Double> salesByCampaign = list.stream()
+                            .collect(Collectors.groupingBy(
+                                    doc -> doc.getString("campaignId"),
+                                    Collectors.summingDouble(doc -> doc.getDouble("value"))
+                            ));
+
+                    List<Kpi> kpis = salesByCampaign.entrySet().stream()
+                            .map(entry -> {
+                                String campaignId = entry.getKey();
+                                Double totalValue = entry.getValue();
+
+                                Kpi kpi = new Kpi();
+                                kpi.setCampaignId(campaignId);
+                                kpi.setCampaignSubId(campaignId); // Parent uses campaignId
+                                kpi.setKpiId("PP-V"); // KPI ID for Push Parent Sales
+                                kpi.setKpiDescription("Venta - GA4 Push (Padre)");
+                                kpi.setType("moneda");
+                                kpi.setValue(totalValue);
+                                kpi.setStatus("A");
+                                kpi.setCreatedUser("-");
+                                kpi.setCreatedDate(LocalDateTime.now());
+                                kpi.setUpdatedDate(LocalDateTime.now());
+                                kpi.setBatchId(batchId);
+                                kpi.setMediaType("PUSH"); // Explicitly set for Push KPIs
+                                return kpi;
+                            })
+                            .collect(Collectors.toList());
+
+                    return Flux.fromIterable(kpis);
+                })
+                .flatMap(this::saveOrUpdateKpiStartOfDay)
+                .transform(flux -> trackMetrics(flux, metrics))
+                .transform(flux -> withErrorHandling(flux, OPERATION_NAME));
+    }
+
 
     @Override
     public Flux<Kpi> generateKpiSalesPushParents() {
@@ -394,9 +576,103 @@ public class KpiRepositoryImpl implements KpiRepository {
 
     @Override
     public Flux<Kpi> generateKpiTransactionsPushParents() {
+        final String OPERATION_NAME = "TRANSACTIONS_PUSH_PARENTS";
+        OperationMetrics metrics = startMetrics(OPERATION_NAME);
+        String fieldToSum = "transactions"; // Assuming field name in ga4_own_media
+
+        String batchId = generateBatchId();
+
+        return prepareQueryGa4PushParent(fieldToSum) // Uses helper for Push Parent logic
+                .collectList()
+                .flatMapMany(list -> {
+                    Map<String, Double> transactionsByCampaign = list.stream()
+                            .collect(Collectors.groupingBy(
+                                    doc -> doc.getString("campaignId"),
+                                    Collectors.summingDouble(doc -> doc.getDouble("value"))
+                            ));
+
+                    List<Kpi> kpis = transactionsByCampaign.entrySet().stream()
+                            .map(entry -> {
+                                String campaignId = entry.getKey();
+                                Double totalValue = entry.getValue();
+
+                                Kpi kpi = new Kpi();
+                                kpi.setCampaignId(campaignId);
+                                kpi.setCampaignSubId(campaignId); // Parent uses campaignId
+                                kpi.setKpiId("PP-T"); // KPI ID for Push Parent Transactions
+                                kpi.setKpiDescription("Transacciones - GA4 Push (Padre)");
+                                kpi.setType("cantidad");
+                                kpi.setValue(totalValue);
+                                kpi.setStatus("A");
+                                kpi.setCreatedUser("-");
+                                kpi.setCreatedDate(LocalDateTime.now());
+                                kpi.setUpdatedDate(LocalDateTime.now());
+                                kpi.setBatchId(batchId);
+                                kpi.setMediaType("PUSH"); // Explicitly set for Push KPIs
+                                return kpi;
+                            })
+                            .collect(Collectors.toList());
+
+                    return Flux.fromIterable(kpis);
+                })
+                .flatMap(this::saveOrUpdateKpiStartOfDay)
+                .transform(flux -> trackMetrics(flux, metrics))
+                .transform(flux -> withErrorHandling(flux, OPERATION_NAME));
+    }
+
+
+    @Override
+    public Flux<Kpi> generateKpiTransactionsPushParents() {
         // Implementación original
         return Flux.empty();
     }
+
+    @Override
+    public Flux<Kpi> generateKpiSessionsPushParents() {
+        final String OPERATION_NAME = "SESSIONS_PUSH_PARENTS";
+        OperationMetrics metrics = startMetrics(OPERATION_NAME);
+        String fieldToSum = "sessions"; // Assuming field name in ga4_own_media
+
+        String batchId = generateBatchId();
+
+        return prepareQueryGa4PushParent(fieldToSum) // Uses helper for Push Parent logic
+                .collectList()
+                .flatMapMany(list -> {
+                    Map<String, Double> sessionsByCampaign = list.stream()
+                            .collect(Collectors.groupingBy(
+                                    doc -> doc.getString("campaignId"),
+                                    Collectors.summingDouble(doc -> doc.getDouble("value"))
+                            ));
+
+                    List<Kpi> kpis = sessionsByCampaign.entrySet().stream()
+                            .map(entry -> {
+                                String campaignId = entry.getKey();
+                                Double totalValue = entry.getValue();
+
+                                Kpi kpi = new Kpi();
+                                kpi.setCampaignId(campaignId);
+                                kpi.setCampaignSubId(campaignId); // Parent uses campaignId
+                                kpi.setKpiId("PP-S"); // KPI ID for Push Parent Sessions
+                                kpi.setKpiDescription("Sesiones - GA4 Push (Padre)");
+                                kpi.setType("cantidad");
+                                kpi.setValue(totalValue);
+                                kpi.setStatus("A");
+                                kpi.setCreatedUser("-");
+                                kpi.setCreatedDate(LocalDateTime.now());
+                                kpi.setUpdatedDate(LocalDateTime.now());
+                                kpi.setBatchId(batchId);
+                                kpi.setMediaType("PUSH"); // Explicitly set for Push KPIs
+                                return kpi;
+                            })
+                            .collect(Collectors.toList());
+
+                    return Flux.fromIterable(kpis);
+                })
+                .flatMap(this::saveOrUpdateKpiStartOfDay)
+                .transform(flux -> trackMetrics(flux, metrics))
+                .transform(flux -> withErrorHandling(flux, OPERATION_NAME));
+    }
+
 
     @Override
     public Flux<Kpi> generateKpiSessionsPushParents() {
@@ -406,9 +682,103 @@ public class KpiRepositoryImpl implements KpiRepository {
 
     @Override
     public Flux<Kpi> generateKpiClicksByFormat() {
+        final String OPERATION_NAME = "CLICKS_BY_FORMAT";
+        OperationMetrics metrics = startMetrics(OPERATION_NAME);
+        String fieldToSum = "clicks"; // Assuming field name in ga4_own_media based on user logic "sum(""Clicks"")"
+        List<String> formats = Arrays.asList("MC", "MF", "MB"); // Formats for Mailing
+
+        String batchId = generateBatchId();
+
+        return prepareQueryGa4ByFormat(fieldToSum, formats) // Uses helper for GA4 query by format
+                .flatMap(doc -> {
+                    String campaignId = doc.getString("campaignId");
+                    String campaignSubId = doc.getString("campaignSubId"); // Provided by prepareQueryGa4ByFormat
+                    String format = doc.getString("format"); // Provided by prepareQueryGa4ByFormat
+                    Double value = doc.getDouble("value");
+
+                    String kpiId;
+                    switch (format) {
+                        case "MC": kpiId = "MC-C"; break;
+                        case "MF": kpiId = "MF-C"; break;
+                        case "MB": kpiId = "MB-C"; break;
+                        default:
+                            log.warn("Unsupported format encountered for Clicks KPI: {}", format);
+                            return Mono.empty();
+                    }
+
+                    Kpi kpi = new Kpi();
+                    kpi.setCampaignId(campaignId);
+                    kpi.setCampaignSubId(campaignSubId);
+                    kpi.setKpiId(kpiId);
+                    kpi.setKpiDescription("Clicks - GA4 Medios Propios (" + format + ")");
+                    kpi.setType("cantidad");
+                    kpi.setValue(value);
+                    kpi.setStatus("A");
+                    kpi.setCreatedUser("-");
+                    kpi.setCreatedDate(LocalDateTime.now());
+                    kpi.setUpdatedDate(LocalDateTime.now());
+                    kpi.setFormat(format); // Set the format field
+                    setOwnedMediaBatchFields(kpi, batchId); // Sets mediaType to OWNED
+
+                    return saveOrUpdateKpiStartOfDay(kpi);
+                })
+                .transform(flux -> trackMetrics(flux, metrics)) // Track performance
+                .transform(flux -> withErrorHandling(flux, OPERATION_NAME)); // Handle errors
+    }
+
+
+    @Override
+    public Flux<Kpi> generateKpiClicksByFormat() {
         // Implementación original
         return Flux.empty();
     }
+
+    @Override
+    public Flux<Kpi> generateKpiSalesByFormat() {
+        final String OPERATION_NAME = "SALES_BY_FORMAT";
+        OperationMetrics metrics = startMetrics(OPERATION_NAME);
+        String fieldToSum = "totalRevenue"; // Assuming field name in ga4_own_media
+        List<String> formats = Arrays.asList("MC", "MF", "MB"); // Formats for Mailing
+
+        String batchId = generateBatchId();
+
+        return prepareQueryGa4ByFormat(fieldToSum, formats) // Uses helper for GA4 query by format
+                .flatMap(doc -> {
+                    String campaignId = doc.getString("campaignId");
+                    String campaignSubId = doc.getString("campaignSubId");
+                    String format = doc.getString("format");
+                    Double value = doc.getDouble("value");
+
+                    String kpiId;
+                    switch (format) {
+                        case "MC": kpiId = "MC-V"; break;
+                        case "MF": kpiId = "MF-V"; break;
+                        case "MB": kpiId = "MB-V"; break;
+                        default:
+                            log.warn("Unsupported format encountered for Sales KPI: {}", format);
+                            return Mono.empty();
+                    }
+
+                    Kpi kpi = new Kpi();
+                    kpi.setCampaignId(campaignId);
+                    kpi.setCampaignSubId(campaignSubId);
+                    kpi.setKpiId(kpiId);
+                    kpi.setKpiDescription("Venta - GA4 Medios Propios (" + format + ")");
+                    kpi.setType("moneda"); // Sales are currency
+                    kpi.setValue(value);
+                    kpi.setStatus("A");
+                    kpi.setCreatedUser("-");
+                    kpi.setCreatedDate(LocalDateTime.now());
+                    kpi.setUpdatedDate(LocalDateTime.now());
+                    kpi.setFormat(format);
+                    setOwnedMediaBatchFields(kpi, batchId);
+
+                    return saveOrUpdateKpiStartOfDay(kpi);
+                })
+                .transform(flux -> trackMetrics(flux, metrics))
+                .transform(flux -> withErrorHandling(flux, OPERATION_NAME));
+    }
+
 
     @Override
     public Flux<Kpi> generateKpiSalesByFormat() {
@@ -418,9 +788,103 @@ public class KpiRepositoryImpl implements KpiRepository {
 
     @Override
     public Flux<Kpi> generateKpiTransactionsByFormat() {
+        final String OPERATION_NAME = "TRANSACTIONS_BY_FORMAT";
+        OperationMetrics metrics = startMetrics(OPERATION_NAME);
+        String fieldToSum = "transactions"; // Assuming field name in ga4_own_media
+        List<String> formats = Arrays.asList("MC", "MF", "MB"); // Formats for Mailing
+
+        String batchId = generateBatchId();
+
+        return prepareQueryGa4ByFormat(fieldToSum, formats) // Uses helper for GA4 query by format
+                .flatMap(doc -> {
+                    String campaignId = doc.getString("campaignId");
+                    String campaignSubId = doc.getString("campaignSubId");
+                    String format = doc.getString("format");
+                    Double value = doc.getDouble("value");
+
+                    String kpiId;
+                    switch (format) {
+                        case "MC": kpiId = "MC-T"; break;
+                        case "MF": kpiId = "MF-T"; break;
+                        case "MB": kpiId = "MB-T"; break;
+                        default:
+                            log.warn("Unsupported format encountered for Transactions KPI: {}", format);
+                            return Mono.empty();
+                    }
+
+                    Kpi kpi = new Kpi();
+                    kpi.setCampaignId(campaignId);
+                    kpi.setCampaignSubId(campaignSubId);
+                    kpi.setKpiId(kpiId);
+                    kpi.setKpiDescription("Transacciones - GA4 Medios Propios (" + format + ")");
+                    kpi.setType("cantidad");
+                    kpi.setValue(value);
+                    kpi.setStatus("A");
+                    kpi.setCreatedUser("-");
+                    kpi.setCreatedDate(LocalDateTime.now());
+                    kpi.setUpdatedDate(LocalDateTime.now());
+                    kpi.setFormat(format);
+                    setOwnedMediaBatchFields(kpi, batchId);
+
+                    return saveOrUpdateKpiStartOfDay(kpi);
+                })
+                .transform(flux -> trackMetrics(flux, metrics))
+                .transform(flux -> withErrorHandling(flux, OPERATION_NAME));
+    }
+
+
+    @Override
+    public Flux<Kpi> generateKpiTransactionsByFormat() {
         // Implementación original
         return Flux.empty();
     }
+
+    @Override
+    public Flux<Kpi> generateKpiSessionsByFormat() {
+        final String OPERATION_NAME = "SESSIONS_BY_FORMAT";
+        OperationMetrics metrics = startMetrics(OPERATION_NAME);
+        String fieldToSum = "sessions"; // Assuming field name in ga4_own_media
+        List<String> formats = Arrays.asList("MC", "MF", "MB"); // Formats for Mailing
+
+        String batchId = generateBatchId();
+
+        return prepareQueryGa4ByFormat(fieldToSum, formats) // Uses helper for GA4 query by format
+                .flatMap(doc -> {
+                    String campaignId = doc.getString("campaignId");
+                    String campaignSubId = doc.getString("campaignSubId");
+                    String format = doc.getString("format");
+                    Double value = doc.getDouble("value");
+
+                    String kpiId;
+                    switch (format) {
+                        case "MC": kpiId = "MC-S"; break;
+                        case "MF": kpiId = "MF-S"; break;
+                        case "MB": kpiId = "MB-S"; break;
+                        default:
+                            log.warn("Unsupported format encountered for Sessions KPI: {}", format);
+                            return Mono.empty();
+                    }
+
+                    Kpi kpi = new Kpi();
+                    kpi.setCampaignId(campaignId);
+                    kpi.setCampaignSubId(campaignSubId);
+                    kpi.setKpiId(kpiId);
+                    kpi.setKpiDescription("Sesiones - GA4 Medios Propios (" + format + ")");
+                    kpi.setType("cantidad");
+                    kpi.setValue(value);
+                    kpi.setStatus("A");
+                    kpi.setCreatedUser("-");
+                    kpi.setCreatedDate(LocalDateTime.now());
+                    kpi.setUpdatedDate(LocalDateTime.now());
+                    kpi.setFormat(format);
+                    setOwnedMediaBatchFields(kpi, batchId);
+
+                    return saveOrUpdateKpiStartOfDay(kpi);
+                })
+                .transform(flux -> trackMetrics(flux, metrics))
+                .transform(flux -> withErrorHandling(flux, OPERATION_NAME));
+    }
+
 
     @Override
     public Flux<Kpi> generateKpiSessionsByFormat() {
@@ -430,9 +894,128 @@ public class KpiRepositoryImpl implements KpiRepository {
 
     @Override
     public Flux<Kpi> generateKpiOpenRateParents() {
+        final String OPERATION_NAME = "OPEN_RATE_PARENTS";
+        OperationMetrics metrics = startMetrics(OPERATION_NAME);
+        String batchId = generateBatchId();
+        LocalDateTime startOfDay = LocalDate.now().atStartOfDay();
+
+        Query impressionsQuery = new Query(Criteria.where("kpiId").is("MP-I")
+                .and("createdDate").gte(startOfDay));
+        Flux<Kpi> impressionsFlux = reactiveMongoTemplate.find(impressionsQuery, Kpi.class, "kpi")
+                .doOnError(e -> log.error("Error fetching MP-I KPIs for Open Rate: {}", e.getMessage()));
+
+
+        Query scopeQuery = new Query(Criteria.where("kpiId").is("MP-A")
+                .and("createdDate").gte(startOfDay));
+        Flux<Kpi> scopeFlux = reactiveMongoTemplate.find(scopeQuery, Kpi.class, "kpi")
+                 .doOnError(e -> log.error("Error fetching MP-A KPIs for Open Rate: {}", e.getMessage()));
+
+        return Flux.zip(
+                impressionsFlux.collectMap(Kpi::getCampaignId), // Map<CampaignId, Kpi(MP-I)>
+                scopeFlux.collectMap(Kpi::getCampaignId)       // Map<CampaignId, Kpi(MP-A)>
+        )
+        .flatMapMany(tuple -> {
+            Map<String, Kpi> impressionsMap = tuple.getT1();
+            Map<String, Kpi> scopeMap = tuple.getT2();
+            List<Kpi> openRateKpis = new ArrayList<>();
+
+            impressionsMap.forEach((campaignId, impressionKpi) -> {
+                Kpi scopeKpi = scopeMap.get(campaignId);
+                if (scopeKpi != null && scopeKpi.getValue() != null && scopeKpi.getValue() != 0.0 && impressionKpi.getValue() != null) {
+                    double openRate = impressionKpi.getValue() / scopeKpi.getValue();
+
+                    Kpi kpi = new Kpi();
+                    kpi.setCampaignId(campaignId);
+                    kpi.setCampaignSubId(campaignId); // Parent KPI uses campaignId as subId
+                    kpi.setKpiId("MP-OR"); // Open Rate Parent
+                    kpi.setKpiDescription("Open Rate Medios Propios (Padre)");
+                    kpi.setType("porcentaje");
+                    kpi.setValue(openRate); // Store as fraction (e.g., 0.1 for 10%)
+                    kpi.setStatus("A");
+                    kpi.setCreatedUser("-");
+                    kpi.setCreatedDate(LocalDateTime.now());
+                    kpi.setUpdatedDate(LocalDateTime.now());
+                    kpi.setBatchId(batchId); // Use current batchId for the derived KPI
+                    kpi.setMediaType("OWNED"); // Parent KPIs are OWNED media
+
+                    openRateKpis.add(kpi);
+                } else {
+                    log.warn("Skipping Open Rate calculation for campaign {}: Scope KPI (MP-A) or Impression KPI (MP-I) missing, null, or scope is zero.", campaignId);
+                }
+            });
+            log.info("Calculated {} Open Rate Parent KPIs.", openRateKpis.size());
+            return Flux.fromIterable(openRateKpis);
+        })
+        .flatMap(this::saveOrUpdateKpiStartOfDay) // Save each calculated KPI
+        .transform(flux -> trackMetrics(flux, metrics))
+        .transform(flux -> withErrorHandling(flux, OPERATION_NAME));
+    }
+
+
+    @Override
+    public Flux<Kpi> generateKpiOpenRateParents() {
         // Implementación original
         return Flux.empty();
     }
+
+    @Override
+    public Flux<Kpi> generateKpiCRParents() {
+        final String OPERATION_NAME = "CR_PARENTS"; // CR = Click Rate
+        OperationMetrics metrics = startMetrics(OPERATION_NAME);
+        String batchId = generateBatchId();
+        LocalDateTime startOfDay = LocalDate.now().atStartOfDay();
+
+        Query clicksQuery = new Query(Criteria.where("kpiId").is("MP-C")
+                .and("createdDate").gte(startOfDay));
+        Flux<Kpi> clicksFlux = reactiveMongoTemplate.find(clicksQuery, Kpi.class, "kpi")
+                .doOnError(e -> log.error("Error fetching MP-C KPIs for CR: {}", e.getMessage()));
+
+        Query impressionsQuery = new Query(Criteria.where("kpiId").is("MP-I")
+                .and("createdDate").gte(startOfDay));
+        Flux<Kpi> impressionsFlux = reactiveMongoTemplate.find(impressionsQuery, Kpi.class, "kpi")
+                .doOnError(e -> log.error("Error fetching MP-I KPIs for CR: {}", e.getMessage()));
+
+        return Flux.zip(
+                clicksFlux.collectMap(Kpi::getCampaignId),       // Map<CampaignId, Kpi(MP-C)>
+                impressionsFlux.collectMap(Kpi::getCampaignId)  // Map<CampaignId, Kpi(MP-I)>
+        )
+        .flatMapMany(tuple -> {
+            Map<String, Kpi> clicksMap = tuple.getT1();
+            Map<String, Kpi> impressionsMap = tuple.getT2();
+            List<Kpi> clickRateKpis = new ArrayList<>();
+
+            clicksMap.forEach((campaignId, clickKpi) -> {
+                Kpi impressionKpi = impressionsMap.get(campaignId);
+                if (impressionKpi != null && impressionKpi.getValue() != null && impressionKpi.getValue() != 0.0 && clickKpi.getValue() != null) {
+                    double clickRate = clickKpi.getValue() / impressionKpi.getValue();
+
+                    Kpi kpi = new Kpi();
+                    kpi.setCampaignId(campaignId);
+                    kpi.setCampaignSubId(campaignId); // Parent KPI uses campaignId as subId
+                    kpi.setKpiId("MP-CR"); // Click Rate Parent
+                    kpi.setKpiDescription("Click Rate Medios Propios (Padre)");
+                    kpi.setType("porcentaje");
+                    kpi.setValue(clickRate); // Store as fraction
+                    kpi.setStatus("A");
+                    kpi.setCreatedUser("-");
+                    kpi.setCreatedDate(LocalDateTime.now());
+                    kpi.setUpdatedDate(LocalDateTime.now());
+                    kpi.setBatchId(batchId);
+                    kpi.setMediaType("OWNED");
+
+                    clickRateKpis.add(kpi);
+                } else {
+                     log.warn("Skipping Click Rate calculation for campaign {}: Impression KPI (MP-I) or Click KPI (MP-C) missing, null, or impressions are zero.", campaignId);
+                }
+            });
+             log.info("Calculated {} Click Rate Parent KPIs.", clickRateKpis.size());
+            return Flux.fromIterable(clickRateKpis);
+        })
+        .flatMap(this::saveOrUpdateKpiStartOfDay)
+        .transform(flux -> trackMetrics(flux, metrics))
+        .transform(flux -> withErrorHandling(flux, OPERATION_NAME));
+    }
+
 
     @Override
     public Flux<Kpi> generateKpiCRParents() {
@@ -442,9 +1025,144 @@ public class KpiRepositoryImpl implements KpiRepository {
 
     @Override
     public Flux<Kpi> generateKpiClickRateByFormat() {
+        final String OPERATION_NAME = "CLICK_RATE_BY_FORMAT";
+        OperationMetrics metrics = startMetrics(OPERATION_NAME);
+        String batchId = generateBatchId();
+        LocalDateTime startOfDay = LocalDate.now().atStartOfDay();
+
+        List<String> clickFormatKpiIds = Arrays.asList("MC-C", "MF-C", "MB-C");
+        Query clicksByFormatQuery = new Query(Criteria.where("kpiId").in(clickFormatKpiIds)
+                .and("createdDate").gte(startOfDay));
+        Flux<Kpi> clicksByFormatFlux = reactiveMongoTemplate.find(clicksByFormatQuery, Kpi.class, "kpi")
+                .doOnError(e -> log.error("Error fetching Clicks by Format KPIs for Click Rate: {}", e.getMessage()));
+
+        Query impressionsQuery = new Query(Criteria.where("kpiId").is("MP-I")
+                .and("createdDate").gte(startOfDay));
+        Flux<Kpi> impressionsFlux = reactiveMongoTemplate.find(impressionsQuery, Kpi.class, "kpi")
+                .doOnError(e -> log.error("Error fetching MP-I KPIs for Click Rate by Format: {}", e.getMessage()));
+
+        return Flux.zip(
+                clicksByFormatFlux.collectList(), // List<Kpi(Clicks by Format)>
+                impressionsFlux.collectMap(Kpi::getCampaignId) // Map<CampaignId, Kpi(MP-I)>
+        )
+        .flatMapMany(tuple -> {
+            List<Kpi> clicksByFormatList = tuple.getT1();
+            Map<String, Kpi> impressionsMap = tuple.getT2();
+            List<Kpi> clickRateKpis = new ArrayList<>();
+
+            clicksByFormatList.forEach(clickKpi -> {
+                String campaignId = clickKpi.getCampaignId();
+                String campaignSubId = clickKpi.getCampaignSubId();
+                String format = clickKpi.getFormat(); // Get format from the click KPI
+                Kpi impressionKpi = impressionsMap.get(campaignId); // Use parent campaignId to find impressions
+
+                if (impressionKpi != null && impressionKpi.getValue() != null && impressionKpi.getValue() != 0.0 && clickKpi.getValue() != null && format != null) {
+                    double clickRate = clickKpi.getValue() / impressionKpi.getValue();
+
+                    String clickRateKpiId;
+                    switch (format) {
+                        case "MC": clickRateKpiId = "MC-CR"; break;
+                        case "MF": clickRateKpiId = "MF-CR"; break;
+                        case "MB": clickRateKpiId = "MB-CR"; break;
+                        default:
+                            log.warn("Unsupported format encountered for Click Rate by Format KPI: {}", format);
+                            return; // Skip this record
+                    }
+
+                    Kpi kpi = new Kpi();
+                    kpi.setCampaignId(campaignId);
+                    kpi.setCampaignSubId(campaignSubId); // Keep the subId from the click KPI
+                    kpi.setKpiId(clickRateKpiId);
+                    kpi.setKpiDescription("Click Rate Medios Propios (" + format + ")");
+                    kpi.setType("porcentaje");
+                    kpi.setValue(clickRate); // Store as fraction
+                    kpi.setStatus("A");
+                    kpi.setCreatedUser("-");
+                    kpi.setCreatedDate(LocalDateTime.now());
+                    kpi.setUpdatedDate(LocalDateTime.now());
+                    kpi.setFormat(format); // Keep the format
+                    kpi.setBatchId(batchId);
+                    kpi.setMediaType("OWNED");
+
+                    clickRateKpis.add(kpi);
+                } else {
+                     log.warn("Skipping Click Rate by Format calculation for campaign {} / subId {} / format {}: Impression KPI (MP-I) or Click KPI ({}) missing, null, or impressions are zero.",
+                             campaignId, campaignSubId, format, clickKpi.getKpiId());
+                }
+            });
+            log.info("Calculated {} Click Rate by Format KPIs.", clickRateKpis.size());
+            return Flux.fromIterable(clickRateKpis);
+        })
+        .flatMap(this::saveOrUpdateKpiStartOfDay)
+        .transform(flux -> trackMetrics(flux, metrics))
+        .transform(flux -> withErrorHandling(flux, OPERATION_NAME));
+    }
+
+
+    @Override
+    public Flux<Kpi> generateKpiClickRateByFormat() {
         // Implementación original
         return Flux.empty();
     }
+
+    @Override
+    public Flux<Kpi> generateKpiOpenRatePushParents() {
+        final String OPERATION_NAME = "OPEN_RATE_PUSH_PARENTS";
+        OperationMetrics metrics = startMetrics(OPERATION_NAME);
+        String batchId = generateBatchId();
+        LocalDateTime startOfDay = LocalDate.now().atStartOfDay();
+
+        Query impressionsQuery = new Query(Criteria.where("kpiId").is("PP-I")
+                .and("createdDate").gte(startOfDay));
+        Flux<Kpi> impressionsFlux = reactiveMongoTemplate.find(impressionsQuery, Kpi.class, "kpi")
+                .doOnError(e -> log.error("Error fetching PP-I KPIs for Push Open Rate: {}", e.getMessage()));
+
+        Query scopeQuery = new Query(Criteria.where("kpiId").is("PP-A")
+                .and("createdDate").gte(startOfDay));
+        Flux<Kpi> scopeFlux = reactiveMongoTemplate.find(scopeQuery, Kpi.class, "kpi")
+                 .doOnError(e -> log.error("Error fetching PP-A KPIs for Push Open Rate: {}", e.getMessage()));
+
+        return Flux.zip(
+                impressionsFlux.collectMap(Kpi::getCampaignId), // Map<CampaignId, Kpi(PP-I)>
+                scopeFlux.collectMap(Kpi::getCampaignId)       // Map<CampaignId, Kpi(PP-A)>
+        )
+        .flatMapMany(tuple -> {
+            Map<String, Kpi> impressionsMap = tuple.getT1();
+            Map<String, Kpi> scopeMap = tuple.getT2();
+            List<Kpi> openRateKpis = new ArrayList<>();
+
+            impressionsMap.forEach((campaignId, impressionKpi) -> {
+                Kpi scopeKpi = scopeMap.get(campaignId);
+                if (scopeKpi != null && scopeKpi.getValue() != null && scopeKpi.getValue() != 0.0 && impressionKpi.getValue() != null) {
+                    double openRate = impressionKpi.getValue() / scopeKpi.getValue();
+
+                    Kpi kpi = new Kpi();
+                    kpi.setCampaignId(campaignId);
+                    kpi.setCampaignSubId(campaignId); // Parent KPI uses campaignId as subId
+                    kpi.setKpiId("PP-OR"); // Push Open Rate Parent
+                    kpi.setKpiDescription("Open Rate Push Medios Propios (Padre)");
+                    kpi.setType("porcentaje");
+                    kpi.setValue(openRate); // Store as fraction
+                    kpi.setStatus("A");
+                    kpi.setCreatedUser("-");
+                    kpi.setCreatedDate(LocalDateTime.now());
+                    kpi.setUpdatedDate(LocalDateTime.now());
+                    kpi.setBatchId(batchId);
+                    kpi.setMediaType("PUSH"); // Explicitly set for Push KPIs
+
+                    openRateKpis.add(kpi);
+                } else {
+                    log.warn("Skipping Push Open Rate calculation for campaign {}: Scope KPI (PP-A) or Impression KPI (PP-I) missing, null, or scope is zero.", campaignId);
+                }
+            });
+            log.info("Calculated {} Push Open Rate Parent KPIs.", openRateKpis.size());
+            return Flux.fromIterable(openRateKpis);
+        })
+        .flatMap(this::saveOrUpdateKpiStartOfDay)
+        .transform(flux -> trackMetrics(flux, metrics))
+        .transform(flux -> withErrorHandling(flux, OPERATION_NAME));
+    }
+
 
     @Override
     public Flux<Kpi> generateKpiOpenRatePushParents() {
@@ -454,9 +1172,93 @@ public class KpiRepositoryImpl implements KpiRepository {
 
     @Override
     public Flux<Kpi> generateKpiRoasGeneral() {
+        final String OPERATION_NAME = "ROAS_GENERAL";
+        OperationMetrics metrics = startMetrics(OPERATION_NAME);
+        String batchId = generateBatchId();
+        LocalDateTime startOfDay = LocalDate.now().atStartOfDay();
+
+        List<String> salesKpiIds = Arrays.asList("MP-V", "PP-V");
+        Query salesQuery = new Query(Criteria.where("kpiId").in(salesKpiIds)
+                .and("createdDate").gte(startOfDay));
+        Flux<Kpi> salesFlux = reactiveMongoTemplate.find(salesQuery, Kpi.class, "kpi")
+                .doOnError(e -> log.error("Error fetching Sales KPIs (MP-V, PP-V) for ROAS: {}", e.getMessage()));
+
+        return salesFlux.collectMap(Kpi::getCampaignId) // Map<CampaignId, Kpi(Sales)>
+            .flatMapMany(salesMap -> {
+                if (salesMap.isEmpty()) {
+                    log.info("No Sales KPIs found for ROAS calculation today.");
+                    return Flux.empty();
+                }
+                List<String> campaignIds = new ArrayList<>(salesMap.keySet());
+                Query campaignQuery = new Query(Criteria.where("campaignId").in(campaignIds));
+
+                return reactiveMongoTemplate.find(campaignQuery, Campaign.class, "campaigns")
+                    .collectMap(Campaign::getCampaignId) // Map<CampaignId, Campaign>
+                    .flatMapMany(campaignMap -> {
+                        List<Kpi> roasKpis = new ArrayList<>();
+                        salesMap.forEach((campaignId, salesKpi) -> {
+                            Campaign campaign = campaignMap.get(campaignId);
+                            if (campaign != null && campaign.getInvestment() != null && campaign.getInvestment() != 0.0 && salesKpi.getValue() != null) {
+                                double roas = salesKpi.getValue() / campaign.getInvestment();
+                                String roasKpiId;
+                                String roasDescription;
+                                String mediaType;
+
+                                if ("MP-V".equals(salesKpi.getKpiId())) {
+                                    roasKpiId = "MP-ROAS";
+                                    roasDescription = "ROAS Medios Propios (Padre)";
+                                    mediaType = "OWNED";
+                                } else if ("PP-V".equals(salesKpi.getKpiId())) {
+                                    roasKpiId = "PP-ROAS";
+                                    roasDescription = "ROAS Push Medios Propios (Padre)";
+                                    mediaType = "PUSH";
+                                } else {
+                                    log.warn("Unexpected Sales KPI ID encountered for ROAS calculation: {}", salesKpi.getKpiId());
+                                    return; // Skip
+                                }
+
+                                Kpi kpi = new Kpi();
+                                kpi.setCampaignId(campaignId);
+                                kpi.setCampaignSubId(campaignId); // Parent ROAS uses campaignId as subId
+                                kpi.setKpiId(roasKpiId);
+                                kpi.setKpiDescription(roasDescription);
+                                kpi.setType("ratio"); // ROAS is a ratio
+                                kpi.setValue(roas);
+                                kpi.setStatus("A");
+                                kpi.setCreatedUser("-");
+                                kpi.setCreatedDate(LocalDateTime.now());
+                                kpi.setUpdatedDate(LocalDateTime.now());
+                                kpi.setBatchId(batchId);
+                                kpi.setMediaType(mediaType);
+
+                                roasKpis.add(kpi);
+                            } else {
+                                log.warn("Skipping ROAS calculation for campaign {}: Campaign, Investment, or Sales KPI ({}) missing, null, or investment is zero.",
+                                         campaignId, salesKpi.getKpiId());
+                            }
+                        });
+                        log.info("Calculated {} ROAS General KPIs.", roasKpis.size());
+                        return Flux.fromIterable(roasKpis);
+                    });
+            })
+            .flatMap(this::saveOrUpdateKpiStartOfDay)
+            .transform(flux -> trackMetrics(flux, metrics))
+            .transform(flux -> withErrorHandling(flux, OPERATION_NAME));
+    }
+
+
+    @Override
+    public Flux<Kpi> generateKpiRoasGeneral() {
         // Implementación original
         return Flux.empty();
     }
+
+    @Override
+    public Flux<Metrics> generateMetricsGeneral() {
+        log.info("generateMetricsGeneral called, returning Flux.empty() as implementation is not defined for this scope.");
+        return Flux.empty(); // Placeholder implementation
+    }
+
 
     @Override
     public Flux<Metrics> generateMetricsGeneral() {
