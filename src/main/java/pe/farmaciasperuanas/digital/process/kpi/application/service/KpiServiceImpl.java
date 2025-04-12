@@ -39,26 +39,35 @@ public class KpiServiceImpl implements KpiService{
     @Override
     public Mono<Map<String, Object>> generateKpiFromSalesforceData() {
         return generateAllMetrics()
-//                .then(processImpressionsParent())
-//                .then(processShippingScopeParent())
-//                .then(processClicksParent())
-//                .then(processImpressionsPushParent())
-//                .then(processShippingScopePushParent())
-//                .then(processSalesParent())
-//                .then(processTransactionsParent())
-//                .then(processSessionsParent())
-//                .then(processSalesPushParent())
-//                .then(processTransactionsPushParent())
-//                .then(processSessionsPushParent())
-//                .then(processSalesByFormat())
-//                .then(processTransactionsByFormat())
-//                .then(processSessionsByFormat())
-//                .then(processClicksByFormat())
-//                .then(processOpenRateParent())
-//                .then(processCrParent())
-//                .then(processClickRateByFormat())
-//                .then(processOpenRatePushParent())
-//                .then(processRoasGeneral())
+                // Grupo 1: KPIs básicos (impresiones, alcance, clics, etc.) - ejecución en paralelo
+                .then(Flux.merge(
+                        processImpressionsParent(),
+                        processShippingScopeParent(),
+                        processClicksParent(),
+                        processImpressionsPushParent(),
+                        processShippingScopePushParent(),
+                        processSalesParent(),
+                        processTransactionsParent(),
+                        processSessionsParent(),
+                        processSalesPushParent(),
+                        processTransactionsPushParent(),
+                        processSessionsPushParent()
+                ).then())
+                // Grupo 2: KPIs por formato - ejecución en paralelo
+                .then(Flux.merge(
+                        processSalesByFormat(),
+                        processTransactionsByFormat(),
+                        processSessionsByFormat(),
+                        processClicksByFormat()
+                ).then())
+                // Grupo 3: KPIs derivados (tasas y ROAS) - ejecución en paralelo
+                .then(Flux.merge(
+                        processOpenRateParent(),
+                        processCrParent(),
+                        processClickRateByFormat(),
+                        processOpenRatePushParent(),
+                        processRoasGeneral()
+                ).then())
                 .then(Mono.just(new HashMap<String, Object>() {{
                     put("message", "Proceso completado con éxito");
                     put("status", "success");
