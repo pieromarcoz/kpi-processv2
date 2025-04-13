@@ -1,3 +1,0 @@
-route-secret: secret-fapeconnect-dev
-route-secret-endpoint: https://dev-secret-manager-ws.solucionestifps.com/api/v1/secret
-app-key: secretManagerId

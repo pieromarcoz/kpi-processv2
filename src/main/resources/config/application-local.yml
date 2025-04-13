@@ -1,9 +1,0 @@
-#spring:
-#  data:
-#    mongodb:
-#      uri: mongodb://root:Ecuador2025!@localhost:27017
-#      database: FapeConnect
-
-route-secret: secret-fapeconnect-dev
-route-secret-endpoint: https://dev-secret-manager-ws.solucionestifps.com/api/v1/secret
-app-key: secretManagerId
