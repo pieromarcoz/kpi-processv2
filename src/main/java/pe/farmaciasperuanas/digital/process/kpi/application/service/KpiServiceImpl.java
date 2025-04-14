@@ -43,7 +43,11 @@ public class KpiServiceImpl implements KpiService{
                 .then(generateKpiScope())
 //                .then(processImpressionsParent())
 //                .then(processShippingScopeParent())
-//                .then(processClicksParent())
+                .then(generateKpiClicksParents())
+                .then(generateKpiClicksByFormat())
+                .then(generateKpiRates())
+                .then(generateKpiClickRatesByFormat())
+                .then(generateKpiPushAppOpenRate())
 //                .then(processImpressionsPushParent())
 //                .then(processShippingScopePushParent())
 //                .then(processSalesParent())
@@ -79,6 +83,49 @@ public class KpiServiceImpl implements KpiService{
                 .then();
     }
 
+    private Mono<Void> generateKpiClicksParents() {
+        log.info("Iniciando generateKpiClicksParents");
+        return Flux.defer(() -> kpiRepository.generateKpiClicksParents())
+                .doOnNext(kpi -> log.info("KPI Clicks generado: {}", kpi))
+                .doOnComplete(() -> log.info("Proceso de Clicks completado"))
+                .doOnError(error -> log.error("Error en generateKpiClicksParents: {}", error.getMessage()))
+                .then();
+    }
+    private Mono<Void> generateKpiClicksByFormat() {
+        log.info("Iniciando generateKpiClicksByFormat");
+        return Flux.defer(() -> kpiRepository.generateKpiClicksByFormat())
+                .doOnNext(kpi -> log.info("KPI Clicks by Format generado: {}", kpi))
+                .doOnComplete(() -> log.info("Proceso de Clicks by Format completado"))
+                .doOnError(error -> log.error("Error en generateKpiClicksByFormat: {}", error.getMessage()))
+                .then();
+    }
+
+    private Mono<Void> generateKpiRates() {
+        log.info("Iniciando generateKpiRates");
+        return Flux.defer(() -> kpiRepository.generateKpiRates())
+                .doOnNext(kpi -> log.info("KPI Rates generado: {}", kpi))
+                .doOnComplete(() -> log.info("Proceso de Rates completado"))
+                .doOnError(error -> log.error("Error en generateKpiRates: {}", error.getMessage()))
+                .then();
+    }
+
+    private Mono<Void> generateKpiClickRatesByFormat() {
+        log.info("Iniciando generateKpiClickRatesByFormat");
+        return Flux.defer(() -> kpiRepository.generateKpiClickRatesByFormat())
+                .doOnNext(kpi -> log.info("KPI Click Rates by Format generado: {}", kpi))
+                .doOnComplete(() -> log.info("Proceso de Click Rates by Format completado"))
+                .doOnError(error -> log.error("Error en generateKpiClickRatesByFormat: {}", error.getMessage()))
+                .then();
+    }
+
+    private Mono<Void> generateKpiPushAppOpenRate() {
+        log.info("Iniciando generateKpiPushAppOpenRate");
+        return Flux.defer(() -> kpiRepository.generateKpiPushAppOpenRate())
+                .doOnNext(kpi -> log.info("KPI Push App Open Rate generado: {}", kpi))
+                .doOnComplete(() -> log.info("Proceso de Push App Open Rate completado"))
+                .doOnError(error -> log.error("Error en generateKpiPushAppOpenRate: {}", error.getMessage()))
+                .then();
+    }
 //    public Mono<Void> processClicksParent() {
 //        return Flux.defer(() -> kpiRepository.generateKpiClicksParents())
 //                .doOnNext(kpi -> System.out.println("Procesando KPI ClicksParent: " + kpi))

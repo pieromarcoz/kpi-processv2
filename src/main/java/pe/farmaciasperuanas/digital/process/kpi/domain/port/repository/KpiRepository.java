@@ -28,6 +28,11 @@ import reactor.core.publisher.Mono;
 public interface KpiRepository {
     Flux<Kpi> generateKpiImpressions();
     Flux<Kpi> generateKpiScope();
+    Flux<Kpi> generateKpiClicksParents();
+    Flux<Kpi> generateKpiClicksByFormat();
+    Flux<Kpi> generateKpiRates();
+    Flux<Kpi> generateKpiClickRatesByFormat();
+    Flux<Kpi> generateKpiPushAppOpenRate();
 //    Flux<Kpi> generateKpiImpressionsPushParents();
 //    Flux<Kpi> generateKpiShippingScopePushParents();
 //    Flux<Kpi> generateKpiClicksParents();

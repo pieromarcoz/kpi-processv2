@@ -18,12 +18,10 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import org.bson.Document;
+
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.Arrays;
-import java.util.Date;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -39,6 +37,7 @@ import java.util.stream.Collectors;
  * <li>Feb 28, 2025 KpiRepositoryImpl class.</li>
  * <li>Apr 12, 2025 Implementación mejorada para KPIs específicos.</li>
  * </ul>
+ *
  * @version 1.0
  */
 @Repository
@@ -66,6 +65,7 @@ public class KpiRepositoryImpl implements KpiRepository {
 
     /**
      * Genera un ID de lote único
+     *
      * @return String con el ID de lote
      */
     private String generateBatchId() {
@@ -74,6 +74,7 @@ public class KpiRepositoryImpl implements KpiRepository {
 
     /**
      * Implementación del método para generar KPIs de impresiones para todos los formatos
+     *
      * @return Flux<Kpi> Flujo de KPIs generados
      */
     @Override
@@ -90,6 +91,7 @@ public class KpiRepositoryImpl implements KpiRepository {
 
     /**
      * Genera KPIs de impresiones (aperturas) para el formato Mailing Padre (MP)
+     *
      * @param batchId ID del lote de procesamiento
      * @return Flux<Kpi> Flujo de KPIs generados
      */
@@ -149,6 +151,7 @@ public class KpiRepositoryImpl implements KpiRepository {
 
     /**
      * Genera KPIs de impresiones (aperturas) para el formato Push App (PA)
+     *
      * @param batchId ID del lote de procesamiento
      * @return Flux<Kpi> Flujo de KPIs generados
      */
@@ -209,8 +212,10 @@ public class KpiRepositoryImpl implements KpiRepository {
                 })
                 .flatMap(this::saveKpi);
     }
+
     /**
      * Genera KPIs de impresiones (aperturas) para el formato Push Web (PW)
+     *
      * @param batchId ID del lote de procesamiento
      * @return Flux<Kpi> Flujo de KPIs generados
      */
@@ -272,6 +277,7 @@ public class KpiRepositoryImpl implements KpiRepository {
                 .flatMap(this::saveKpi);
     }
 
+
     // Clase auxiliar para mapear resultados de impresiones
     private static class ImpressionsResult {
         private String campaignId;
@@ -311,8 +317,10 @@ public class KpiRepositoryImpl implements KpiRepository {
             this.value = value;
         }
     }
+
     /**
      * Implementación del método para generar KPIs de alcance para todos los formatos
+     *
      * @return Flux<Kpi> Flujo de KPIs generados
      */
     @Override
@@ -328,7 +336,361 @@ public class KpiRepositoryImpl implements KpiRepository {
     }
 
     /**
+     * Procesa los clicks del mail padre
+     */
+    @Override
+    public Flux<Kpi> generateKpiClicksParents() {
+        String batchId = generateBatchId();
+        log.info("Iniciando generación de KPIs de clicks para mail padre");
+
+        Aggregation aggregation = Aggregation.newAggregation(
+                Aggregation.group("SendID")
+                        .count().as("clickCount"),
+                Aggregation.project()
+                        .and("_id").as("SendID")
+                        .and("clickCount").as("clickCount"),
+                Aggregation.lookup()
+                        .from("bq_ds_campanias_salesforce_sendjobs")
+                        .localField("_id")
+                        .foreignField("SendID")
+                        .as("sendjobs"),
+                Aggregation.unwind("sendjobs", true),
+                Aggregation.project()
+                        .and("SendID").as("SendID")
+                        .and("clickCount").as("clickCount")
+                        .and("sendjobs.campaignId").as("campaignId"),
+                Aggregation.match(
+                        Criteria.where("campaignId").exists(true)
+                ),
+                Aggregation.lookup()
+                        .from("campaigns")
+                        .localField("campaignId")
+                        .foreignField("campaignId")
+                        .as("campaign"),
+                Aggregation.unwind("campaign", true)
+        );
+
+        return reactiveMongoTemplate.aggregate(
+                        aggregation,
+                        "bq_ds_campanias_salesforce_clicks",
+                        Document.class)
+                .filter(doc -> doc.get("clickCount") != null && doc.get("campaign") != null)
+                .map(doc -> {
+                    Kpi kpi = new Kpi();
+                    kpi.setCampaignId(doc.getString("campaignId"));
+                    kpi.setCampaignSubId(doc.getString("campaignId"));
+                    kpi.setKpiId("MP-C");
+                    kpi.setKpiDescription("Clics medios propios");
+                    kpi.setValue(Double.valueOf(doc.getInteger("clickCount")));
+                    kpi.setType("cantidad");
+                    kpi.setCreatedUser("-");
+                    kpi.setCreatedDate(LocalDateTime.now());
+                    kpi.setUpdatedDate(LocalDateTime.now());
+                    kpi.setStatus("A");
+                    kpi.setFormat(FORMAT_MP);
+                    kpi.setBatchId(batchId);
+                    kpi.setTypeMedia(MEDIO_PROPIO);
+                    return kpi;
+                })
+                .flatMap(this::saveKpi);
+    }
+
+    @Override
+    public Flux<Kpi> generateKpiClicksByFormat() {
+        String batchId = generateBatchId();
+        log.info("Iniciando generación de KPIs de clicks por formato");
+
+        Aggregation aggregation = Aggregation.newAggregation(
+                // Agrupar por SendID y campaignSubId (importante para diferenciar formatos)
+                Aggregation.group("SendID", "campaignSubId")
+                        .count().as("clickCount"),
+
+                // Proyección inicial
+                Aggregation.project()
+                        .and("_id.SendID").as("SendID")
+                        .and("_id.campaignSubId").as("campaignSubId")
+                        .and("clickCount").as("clickCount"),
+
+                // Lookup con sendjobs para obtener campaignId
+                Aggregation.lookup()
+                        .from("bq_ds_campanias_salesforce_sendjobs")
+                        .localField("SendID")
+                        .foreignField("SendID")
+                        .as("sendjobs"),
+
+                // Desenrollar sendjobs
+                Aggregation.unwind("sendjobs", true),
+
+                // Lookup con campaigns
+                Aggregation.lookup()
+                        .from("campaigns")
+                        .localField("sendjobs.campaignId")
+                        .foreignField("campaignId")
+                        .as("campaign"),
+
+                // Desenrollar campaign
+                Aggregation.unwind("campaign", true),
+
+                // Proyección final
+                Aggregation.project()
+                        .and("campaignSubId").as("campaignSubId")
+                        .and("campaign.campaignId").as("campaignId")
+                        .and("clickCount").as("clickCount")
+        );
+
+        return reactiveMongoTemplate.aggregate(
+                        aggregation,
+                        "bq_ds_campanias_salesforce_clicks",
+                        Document.class)
+                .doOnNext(doc -> log.debug("Documento recibido: campaignSubId={}, clickCount={}",
+                        doc.getString("campaignSubId"), doc.get("clickCount")))
+                // Filtramos documentos válidos
+                .filter(doc -> {
+                    boolean isValid = doc.get("clickCount") != null &&
+                            doc.get("campaignId") != null &&
+                            doc.getString("campaignSubId") != null;
+                    if (!isValid) {
+                        log.debug("Documento filtrado por datos incompletos");
+                    }
+                    return isValid;
+                })
+                .map(doc -> {
+                    try {
+                        String campaignSubId = doc.getString("campaignSubId");
+                        String format = getFormatFromSubId(campaignSubId);
+
+                        if (format == null) {
+                            log.debug("Formato no válido para campaignSubId: {}", campaignSubId);
+                            return null;
+                        }
+
+                        Kpi kpi = new Kpi();
+                        kpi.setCampaignId(doc.getString("campaignId"));
+                        kpi.setCampaignSubId(campaignSubId);
+                        kpi.setKpiId(format + "C"); // MC-C, MF-C, MB-C
+                        kpi.setKpiDescription("Clics " + getFormatDescription(format));
+                        kpi.setValue(Double.valueOf(doc.getInteger("clickCount")));
+                        kpi.setType("cantidad");
+                        kpi.setCreatedUser("-");
+                        kpi.setCreatedDate(LocalDateTime.now());
+                        kpi.setUpdatedDate(LocalDateTime.now());
+                        kpi.setStatus("A");
+                        kpi.setFormat(format);
+                        kpi.setBatchId(batchId);
+                        kpi.setTypeMedia(MEDIO_PROPIO);
+                        return kpi;
+                    } catch (Exception e) {
+                        log.error("Error al procesar documento: {}", e.getMessage());
+                        return null;
+                    }
+                })
+                .filter(kpi -> kpi != null)
+                .flatMap(this::saveKpi)
+                .onErrorResume(error -> {
+                    log.error("Error en generateKpiClicksByFormat: {}", error.getMessage());
+                    return Flux.empty();
+                });
+    }
+
+    private String getFormatFromSubId(String campaignSubId) {
+        if (campaignSubId == null) return null;
+
+        if (campaignSubId.endsWith("MC")) {
+            return "MC"; // Mailing Cabecera
+        } else if (campaignSubId.endsWith("MF")) {
+            return "MF"; // Mailing Feed
+        } else if (campaignSubId.endsWith("MB")) {
+            return "MB"; // Mailing Body
+        }
+        return null;
+    }
+
+    private String getFormatDescription(String format) {
+        switch (format) {
+            case "MC": return "Mailing Cabecera";
+            case "MF": return "Mailing Feed";
+            case "MB": return "Mailing Body";
+            default: return "";
+        }
+    }
+
+    @Override
+    public Flux<Kpi> generateKpiRates() {
+        String batchId = generateBatchId();
+        log.info("Iniciando generación de KPIs de rates para mail padre");
+
+        // Primero obtenemos todos los datos necesarios para los cálculos
+        return reactiveMongoTemplate.find(
+                        Query.query(Criteria.where("kpiId").in("MP-I", "MP-A", "MP-C")
+                                .and("status").is("A")),
+                        Kpi.class,
+                        "kpi_v2"
+                )
+                .collectMultimap(Kpi::getCampaignId)
+                .flatMapMany(kpisByCampaign -> {
+                    List<Kpi> rateKpis = new ArrayList<>();
+
+                    kpisByCampaign.forEach((campaignId, kpis) -> {
+                        Map<String, Double> values = kpis.stream()
+                                .collect(Collectors.toMap(Kpi::getKpiId, Kpi::getValue));
+
+                        // Calcular Open Rate (OR) = Impresiones / Alcance
+                        if (values.containsKey("MP-I") && values.containsKey("MP-A") && values.get("MP-A") > 0) {
+                            double openRate = values.get("MP-I") / values.get("MP-A");
+                            rateKpis.add(createRateKpi(campaignId, "MP-OR", "Open Rate (OR)", openRate, batchId));
+                        }
+
+                        // Calcular CTR = Clics / Impresiones
+                        if (values.containsKey("MP-C") && values.containsKey("MP-I") && values.get("MP-I") > 0) {
+                            double ctr = values.get("MP-C") / values.get("MP-I");
+                            rateKpis.add(createRateKpi(campaignId, "MP-CR", "CTR (CR)", ctr, batchId));
+                        }
+                    });
+
+                    return Flux.fromIterable(rateKpis);
+                })
+                .flatMap(this::saveKpi);
+    }
+
+    private Kpi createRateKpi(String campaignId, String kpiId, String description, double value, String batchId) {
+        Kpi kpi = new Kpi();
+        kpi.setCampaignId(campaignId);
+        kpi.setCampaignSubId(campaignId);
+        kpi.setKpiId(kpiId);
+        kpi.setKpiDescription(description);
+        kpi.setValue(value);
+        kpi.setType("porcentaje");
+        kpi.setCreatedUser("-");
+        kpi.setCreatedDate(LocalDateTime.now());
+        kpi.setUpdatedDate(LocalDateTime.now());
+        kpi.setStatus("A");
+        kpi.setFormat(FORMAT_MP);
+        kpi.setBatchId(batchId);
+        kpi.setTypeMedia(MEDIO_PROPIO);
+        return kpi;
+    }
+
+    @Override
+    public Flux<Kpi> generateKpiClickRatesByFormat() {
+        String batchId = generateBatchId();
+        log.info("Iniciando generación de Click Rates por formato");
+
+        // Primero obtenemos los clicks por formato y las impresiones (aperturas)
+        return reactiveMongoTemplate.find(
+                        Query.query(Criteria.where("kpiId").in("MCC", "MFC", "MBC", "MP-I")),
+                        Kpi.class,
+                        "kpi_v2"
+                )
+                .collectMultimap(Kpi::getCampaignId)
+                .flatMapMany(kpisByCampaign -> {
+                    List<Kpi> rateKpis = new ArrayList<>();
+
+                    kpisByCampaign.forEach((campaignId, kpis) -> {
+                        Double impressions = kpis.stream()
+                                .filter(k -> k.getKpiId().equals("MP-I"))
+                                .map(Kpi::getValue)
+                                .findFirst()
+                                .orElse(0.0);
+
+                        if (impressions > 0) {
+                            // Calcular Click Rate para cada formato
+                            kpis.stream()
+                                    .filter(k -> k.getKpiId().matches("(MCC|MFC|MBC)"))
+                                    .forEach(clickKpi -> {
+                                        String format = clickKpi.getFormat(); // MC, MF, o MB
+                                        double clickRate = clickKpi.getValue() / impressions;
+
+                                        Kpi rateKpi = new Kpi();
+                                        rateKpi.setCampaignId(campaignId);
+                                        rateKpi.setCampaignSubId(clickKpi.getCampaignSubId());
+                                        rateKpi.setKpiId(format + "CR");
+                                        rateKpi.setKpiDescription("Click Rate " + getFormatDescription(format));
+                                        rateKpi.setValue(clickRate);
+                                        rateKpi.setType("porcentaje");
+                                        rateKpi.setCreatedUser("-");
+                                        rateKpi.setCreatedDate(LocalDateTime.now());
+                                        rateKpi.setUpdatedDate(LocalDateTime.now());
+                                        rateKpi.setStatus("A");
+                                        rateKpi.setFormat(format);
+                                        rateKpi.setBatchId(batchId);
+                                        rateKpi.setTypeMedia(MEDIO_PROPIO);
+
+                                        rateKpis.add(rateKpi);
+                                    });
+                        }
+                    });
+
+                    return Flux.fromIterable(rateKpis);
+                })
+                .doOnNext(kpi -> log.info("Click Rate generado: {}", kpi))
+                .flatMap(this::saveKpi)
+                .onErrorResume(error -> {
+                    log.error("Error en generateKpiClickRatesByFormat: {}", error.getMessage());
+                    return Flux.empty();
+                });
+    }
+    @Override
+    public Flux<Kpi> generateKpiPushAppOpenRate() {
+        String batchId = generateBatchId();
+        log.info("Iniciando generación de Open Rate para Push App");
+
+        return reactiveMongoTemplate.find(
+                        Query.query(Criteria.where("kpiId").in("PA-I", "PA-A")
+                                .and("status").is("A")),
+                        Kpi.class,
+                        "kpi_v2"
+                )
+                .collectMultimap(Kpi::getCampaignId)
+                .flatMapMany(kpisByCampaign -> {
+                    List<Kpi> rateKpis = new ArrayList<>();
+
+                    kpisByCampaign.forEach((campaignId, kpis) -> {
+                        Double impressions = kpis.stream()
+                                .filter(k -> k.getKpiId().equals("PA-I"))
+                                .map(Kpi::getValue)
+                                .findFirst()
+                                .orElse(0.0);
+
+                        Double scope = kpis.stream()
+                                .filter(k -> k.getKpiId().equals("PA-A"))
+                                .map(Kpi::getValue)
+                                .findFirst()
+                                .orElse(0.0);
+
+                        if (scope > 0) {
+                            double openRate = impressions / scope;
+
+                            Kpi rateKpi = new Kpi();
+                            rateKpi.setCampaignId(campaignId);
+                            rateKpi.setCampaignSubId(campaignId);
+                            rateKpi.setKpiId("PA-OR");
+                            rateKpi.setKpiDescription("Open Rate (OR)");
+                            rateKpi.setValue(openRate);
+                            rateKpi.setType("porcentaje");
+                            rateKpi.setCreatedUser("-");
+                            rateKpi.setCreatedDate(LocalDateTime.now());
+                            rateKpi.setUpdatedDate(LocalDateTime.now());
+                            rateKpi.setStatus("A");
+                            rateKpi.setFormat("PA");
+                            rateKpi.setBatchId(batchId);
+                            rateKpi.setTypeMedia(MEDIO_PROPIO);
+
+                            rateKpis.add(rateKpi);
+                        }
+                    });
+
+                    return Flux.fromIterable(rateKpis);
+                })
+                .flatMap(this::saveKpi)
+                .onErrorResume(error -> {
+                    log.error("Error en generateKpiPushAppOpenRate: {}", error.getMessage());
+                    return Flux.empty();
+                });
+    }
+
+    /**
      * Genera KPIs de alcance (envíos) para el formato Mailing Padre (MP)
+     *
      * @param batchId ID del lote de procesamiento
      * @return Flux<Kpi> Flujo de KPIs generados
      */
@@ -387,6 +749,7 @@ public class KpiRepositoryImpl implements KpiRepository {
 
     /**
      * Genera KPIs de alcance (envíos) para el formato Push App (PA)
+     *
      * @param batchId ID del lote de procesamiento
      * @return Flux<Kpi> Flujo de KPIs generados
      */
@@ -461,6 +824,7 @@ public class KpiRepositoryImpl implements KpiRepository {
 
     /**
      * Genera KPIs de alcance (envíos) para el formato Push Web (PW)
+     *
      * @param batchId ID del lote de procesamiento
      * @return Flux<Kpi> Flujo de KPIs generados
      */
@@ -535,6 +899,7 @@ public class KpiRepositoryImpl implements KpiRepository {
 
     /**
      * Guarda un KPI en la base de datos
+     *
      * @param kpi KPI a guardar
      * @return Mono<Kpi> KPI guardado
      */
@@ -602,79 +967,6 @@ public class KpiRepositoryImpl implements KpiRepository {
             this.value = value;
         }
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
     /**
