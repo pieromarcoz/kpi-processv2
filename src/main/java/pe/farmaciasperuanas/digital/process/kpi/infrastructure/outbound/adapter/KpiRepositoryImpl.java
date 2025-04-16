@@ -1945,7 +1945,7 @@ public class KpiRepositoryImpl implements KpiRepository {
 
         // Primero obtenemos las campañas activas con formato MP
         return reactiveMongoTemplate.find(
-                        Query.query(Criteria.where("status").is("En proceso")
+                        Query.query(Criteria.where("status").in("En proceso", "Programado")
                                 .and("media").elemMatch(Criteria.where("format").is(FORMAT_MP))),
                         Campaign.class
                 )
