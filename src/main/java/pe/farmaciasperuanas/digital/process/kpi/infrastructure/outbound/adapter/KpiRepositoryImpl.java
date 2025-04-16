@@ -2223,7 +2223,7 @@ public class KpiRepositoryImpl implements KpiRepository {
 
                     return reactiveMongoTemplate.find(
                                     Query.query(Criteria.where("campaignId").in(campaignIds)
-                                            .and("status").is("En proceso")),
+                                            .and("status").in("En proceso", "Programado")),
                                     Campaign.class
                             )
                             .collectMap(Campaign::getCampaignId)
@@ -2338,7 +2338,7 @@ public class KpiRepositoryImpl implements KpiRepository {
 
                     return reactiveMongoTemplate.find(
                                     Query.query(Criteria.where("campaignId").in(campaignIds)
-                                            .and("status").is("En proceso")),
+                                            .and("status").in("En proceso", "Programado")),
                                     Campaign.class
                             )
                             .collectMap(Campaign::getCampaignId)
@@ -2425,7 +2425,7 @@ public class KpiRepositoryImpl implements KpiRepository {
 
                     return reactiveMongoTemplate.find(
                                     Query.query(Criteria.where("campaignId").in(campaignIds)
-                                            .and("status").is("En proceso")
+                                            .and("status").in("En proceso", "Programado")
                                             .and("media").elemMatch(Criteria.where("format").is(FORMAT_PA))),
                                     Campaign.class
                             )
