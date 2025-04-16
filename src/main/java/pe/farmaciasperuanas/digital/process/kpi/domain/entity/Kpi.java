@@ -30,4 +30,5 @@ public class Kpi {
     private String format;
     private String batchId;         // Nueva variable para identificar el lote
     private String typeMedia;       // Nueva variable para el tipo de medio (MEDIO PAGADO o MEDIO PROPIO)
+    private String providerId;     // Nueva variable para el tipo de medio (MEDIO PAGADO o MEDIO PROPIO)
 }

@@ -2,7 +2,6 @@ package pe.farmaciasperuanas.digital.process.kpi.domain.port.repository;
 
 import org.springframework.stereotype.Repository;
 import pe.farmaciasperuanas.digital.process.kpi.domain.entity.Kpi;
-import pe.farmaciasperuanas.digital.process.kpi.domain.entity.Metrics;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -26,30 +25,16 @@ import reactor.core.publisher.Mono;
 
 @Repository
 public interface KpiRepository {
-    Flux<Kpi> generateKpiImpressions();
-    Flux<Kpi> generateKpiScope();
-    Flux<Kpi> generateKpiClicksParents();
-    Flux<Kpi> generateKpiClicksByFormat();
-    Flux<Kpi> generateKpiRates();
-    Flux<Kpi> generateKpiClickRatesByFormat();
-    Flux<Kpi> generateKpiPushAppOpenRate();
-//    Flux<Kpi> generateKpiImpressionsPushParents();
-//    Flux<Kpi> generateKpiShippingScopePushParents();
-//    Flux<Kpi> generateKpiClicksParents();
-//    Flux<Kpi> generateKpiSalesParents();
-//    Flux<Kpi> generateKpiTransactionsParents();
-//    Flux<Kpi> generateKpiSessionsParents();
-//    Flux<Kpi> generateKpiSalesPushParents();
-//    Flux<Kpi> generateKpiTransactionsPushParents();
-//    Flux<Kpi> generateKpiSessionsPushParents();
-//    Flux<Kpi> generateKpiClicksByFormat();
-//    Flux<Kpi> generateKpiSalesByFormat();
-//    Flux<Kpi> generateKpiTransactionsByFormat();
-//    Flux<Kpi> generateKpiSessionsByFormat();
-//    Flux<Kpi> generateKpiOpenRateParents();
-//    Flux<Kpi> generateKpiCRParents();
-//    Flux<Kpi> generateKpiClickRateByFormat();
-//    Flux<Kpi> generateKpiOpenRatePushParents();
-//    Flux<Kpi> generateKpiRoasGeneral();
-      Flux<Metrics> generateMetricsGeneral();
+      Flux<Kpi> generateKpiImpressions();
+      Flux<Kpi> generateKpiScope();
+      Flux<Kpi> generatePushWebKpis();
+      Flux<Kpi> generateKpiClicks();
+      Flux<Kpi> generateKpiRates();
+      Flux<Kpi> generateKpiDeliveredMailParent();
+      Flux<Kpi> generateKpiSales();
+      Flux<Kpi> generateKpiTransactions();
+      Flux<Kpi> processSessions();
+      Flux<Object> generateKpiRoasGeneral();
+      Mono<Void> generateMetricsGeneral();
+
 }
