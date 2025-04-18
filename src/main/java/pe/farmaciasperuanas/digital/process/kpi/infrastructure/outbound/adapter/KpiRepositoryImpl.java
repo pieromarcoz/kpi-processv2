@@ -91,6 +91,7 @@ public class KpiRepositoryImpl implements KpiRepository {
     }
 
 
+
     /**
      * Implementación del método para generar KPIs de alcance para todos los formatos
      *
@@ -2113,8 +2114,9 @@ public class KpiRepositoryImpl implements KpiRepository {
                 })
                 .flatMap(doc -> {
                     try {
+                        String campaignSubId = doc.getString("campaignSubId");
                         String campaignId = doc.getString("campaignId");
-                        String format = getFormatFromSubId(doc.getString("campaignSubId"));
+                        String format = getFormatFromSubId(campaignSubId);
 
                         if (format == null) {
                             log.debug("Formato no válido para campaignSubId: {}", doc.getString("campaignSubId"));
@@ -2137,7 +2139,7 @@ public class KpiRepositoryImpl implements KpiRepository {
 
                                     Kpi kpi = new Kpi();
                                     kpi.setCampaignId(campaignId);
-                                    kpi.setCampaignSubId(correctCampaignSubId);
+                                    kpi.setCampaignSubId(campaignSubId);
                                     kpi.setKpiId(format + "C"); // MC-C, MF-C, MB-C
                                     kpi.setKpiDescription("Clics " + getFormatDescription(format));
                                     kpi.setValue(Double.valueOf(doc.getInteger("clickCount")));
