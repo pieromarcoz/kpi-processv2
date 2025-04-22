@@ -71,5 +71,9 @@ public interface KpiRepositoryCustom extends ReactiveMongoRepository<Kpi, String
             List<String> kpiIds,
             LocalDateTime startDate,
             LocalDateTime endDate);
+
+    Mono<Kpi> findByKpiIdAndProviderIdAndCreatedDateBetween(String kpiId, String providerId,
+                                                            LocalDateTime startDate, LocalDateTime endDate);
+
 }
 

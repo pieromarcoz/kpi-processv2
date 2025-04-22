@@ -1,8 +1,11 @@
 package pe.farmaciasperuanas.digital.process.kpi.infrastructure.inbound.controller;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import pe.farmaciasperuanas.digital.process.kpi.application.service.KpiPaidMediaServiceImpl;
+import pe.farmaciasperuanas.digital.process.kpi.application.service.KpiServiceImpl;
 import pe.farmaciasperuanas.digital.process.kpi.domain.port.service.PaidMediaKpiCalculatorService;
 import reactor.core.publisher.Mono;
 
@@ -20,10 +23,11 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class PaidMediaKpiController {
 
-
+    @Autowired
+    private KpiPaidMediaServiceImpl kpiPaidMediaService;
     @PostMapping("/calculate")
-    public Mono<ResponseEntity<Map<String, Object>>> calculateKpis() {
-     return null;
+    public Mono<Map<String, Object>> generatekpiPaidMedia() {
+        return kpiPaidMediaService.generateKpiFromPaidMedia();
 
     }
 

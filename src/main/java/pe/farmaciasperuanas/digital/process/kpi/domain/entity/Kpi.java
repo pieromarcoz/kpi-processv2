@@ -13,7 +13,7 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @Data
 @Builder
-@Document(collection = "kpi_v2")
+@Document(collection = "kpi")
 public class Kpi {
     @Id
     private String id;

@@ -22,6 +22,7 @@ public class KpiPaidMediaServiceImpl implements KpiPaidMediaService {
     @Override
     public Mono<Map<String, Object>> generateKpiFromPaidMedia() {
         return  CalculateInvestment()
+                .then(CalculateRoas())
                 .then(Mono.just(new HashMap<String, Object>() {{
                     put("message", "Proceso completado con éxito para Paid Media");
                     put("status", "success");
@@ -34,6 +35,10 @@ public class KpiPaidMediaServiceImpl implements KpiPaidMediaService {
                 .then();
     }
 
-
+    public Mono<Void> CalculateRoas() {
+        return Flux.defer(() -> kpiPaidMediaRepository.CalculateRoas())
+                .doOnNext(kpi -> System.out.println("Procesando KPI CalculateRoas: " + kpi))
+                .then();
+    }
 
 }

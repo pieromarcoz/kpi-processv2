@@ -196,8 +196,7 @@ public class KpiRepositoryImpl implements KpiRepository {
         return reactiveMongoTemplate.find(
                         Query.query(Criteria.where("kpiId").in("PW-I", "PW-A")
                                 .and("status").is("A")),
-                        Kpi.class,
-                        "kpi_v2"
+                        Kpi.class
                 )
                 .collectMultimap(Kpi::getCampaignId)
                 .flatMapMany(kpisByCampaign -> {
@@ -605,116 +604,68 @@ public class KpiRepositoryImpl implements KpiRepository {
      * @return Flux<Kpi> Flujo de KPIs generados
      */
     private Flux<Kpi> generateKpiScopeMailingParent(String batchId) {
-        log.info("Generando KPI de alcance (envíos) para Mailing Padre (MP) siguiendo el query exacto de BigQuery");
+        log.info("Generando KPI de alcance (envíos) para Mailing Padre (MP)");
 
-        // Convertir batchId a String si no lo es y hacerlo final para su uso en lambdas
-        final String finalBatchId = String.valueOf(batchId);
+        // Obtener campañas activas con formato MP
+        return reactiveMongoTemplate.find(
+                Query.query(Criteria.where("status").is("En proceso")
+                        .and("media").elemMatch(Criteria.where("format").is(FORMAT_MP))),
+                Campaign.class
+        ).flatMap(campaign -> {
+            log.info("Procesando campaña para MP-A: {}, providerId: {}",
+                    campaign.getCampaignId(), campaign.getProviderId());
 
-        // Filtrar por campañas activas y del último año
-        LocalDateTime oneYearAgo = LocalDateTime.now().minusYears(1);
+            return reactiveMongoTemplate.aggregate(
+                            Aggregation.newAggregation(
+                                    // Join con sendjobs
+                                    Aggregation.lookup(
+                                            "bq_ds_campanias_salesforce_sendjobs",
+                                            "SendID",
+                                            "SendID",
+                                            "sendjobs"
+                                    ),
+                                    // Desenrollar el resultado del join
+                                    Aggregation.unwind("sendjobs"),
+                                    // Match por campaignId
+                                    Aggregation.match(
+                                            Criteria.where("sendjobs.campaignId").is(campaign.getCampaignId())
+                                    ),
+                                    // Group por EmailAddress para DISTINCT COUNT
+                                    Aggregation.group("EmailAddress"),
+                                    // Count final de emails únicos
+                                    Aggregation.group()
+                                            .count().as("distinctCount")
+                            ),
+                            "bq_ds_campanias_salesforce_sents",
+                            Document.class
+                    ).next()
+                    .flatMap(result -> {
+                        Integer count = result.getInteger("distinctCount");
+                        log.info("Alcance calculado para MP-A: {}", count);
 
-        try {
-            log.info("Consultando campañas activas con formato MP y actualizadas después de {}", oneYearAgo);
-            Query query = new Query();
-            query.addCriteria(Criteria.where("status").in("En proceso"));
-            query.addCriteria(Criteria.where("media").elemMatch(Criteria.where("format").is(String.valueOf(FORMAT_MP))));
-            query.addCriteria(Criteria.where("updatedDate").gte(oneYearAgo));
-            query.limit(100);
+                        Kpi kpi = new Kpi();
+                        kpi.setCampaignId(campaign.getCampaignId());
+                        kpi.setCampaignSubId(campaign.getCampaignId());
+                        kpi.setKpiId("MP-A");
+                        kpi.setKpiDescription("Alcance (Envíos)");
+                        kpi.setValue(count.doubleValue());
+                        kpi.setType("cantidad");
+                        kpi.setCreatedUser("-");
+                        kpi.setCreatedDate(LocalDateTime.now());
+                        kpi.setUpdatedDate(LocalDateTime.now());
+                        kpi.setStatus("A");
+                        kpi.setFormat(FORMAT_MP);
+                        kpi.setBatchId(batchId);
+                        kpi.setTypeMedia(MEDIO_PROPIO);
+                        kpi.setProviderId(campaign.getProviderId());
 
-            return reactiveMongoTemplate.find(query, Campaign.class)
-                    .collectList()
-                    .flatMapMany(campaigns -> {
-                        if (campaigns.isEmpty()) {
-                            log.info("No se encontraron campañas activas para Mailing Padre (MP)");
-                            return Flux.empty();
-                        }
-
-                        // Agrupar campañas por providerId
-                        Map<String, List<Campaign>> campaignsByProvider = campaigns.stream()
-                                .filter(c -> c.getProviderId() != null && !c.getProviderId().isEmpty())
-                                .collect(Collectors.groupingBy(Campaign::getProviderId));
-
-                        log.info("Se encontraron {} proveedores diferentes con campañas activas", campaignsByProvider.size());
-
-                        // Procesar cada provider
-                        return Flux.fromIterable(campaignsByProvider.entrySet())
-                                .flatMap(entry -> {
-                                    String providerId = entry.getKey();
-                                    List<Campaign> providerCampaigns = entry.getValue();
-
-                                    log.info("Procesando providerId: {} con {} campañas activas", providerId, providerCampaigns.size());
-
-                                    // Implementar el query SQL proporcionado usando aggregation
-                                    // Primero obtenemos los campaignIds para este provider
-                                    List<String> campaignIds = providerCampaigns.stream()
-                                            .map(Campaign::getCampaignId)
-                                            .filter(id -> id != null && !id.isEmpty())
-                                            .collect(Collectors.toList());
-
-                                    if (campaignIds.isEmpty()) {
-                                        log.info("No hay campaignIds válidos para providerId {}", providerId);
-                                        return Flux.empty();
-                                    }
-
-                                    // Realizamos un aggregation que simula el JOIN de SQL
-                                    return reactiveMongoTemplate.aggregate(
-                                                    Aggregation.newAggregation(
-                                                            // Iniciar desde sendjobs (equivalente a la tabla b en el SQL)
-                                                            Aggregation.match(Criteria.where("campaignId").in(campaignIds)),
-                                                            // Proyectar solo los campos que necesitamos
-                                                            Aggregation.project("SendID", "campaignId"),
-                                                            // Hacer un $lookup para unir con sents (equivalente a la tabla a en el SQL)
-                                                            Aggregation.lookup("bq_ds_campanias_salesforce_sents", "SendID", "SendID", "sents"),
-                                                            // Desenrollar los resultados para obtener todos los EmailAddress
-                                                            Aggregation.unwind("sents"),
-                                                            // Agrupar por EmailAddress para eliminar duplicados
-                                                            Aggregation.group("sents.EmailAddress").count().as("count"),
-                                                            // Contar el número total de EmailAddress únicos
-                                                            Aggregation.group().count().as("distinctCount")
-                                                    ),
-                                                    "bq_ds_campanias_salesforce_sendjobs",
-                                                    Document.class
-                                            ).collectList()
-                                            .map(list -> list.isEmpty() ? new Document("distinctCount", 0) : list.get(0))
-                                            .flatMapMany(countResult -> {
-                                                // Extraer valor del conteo y manejarlo de forma segura
-                                                Object rawCount = countResult.get("distinctCount");
-                                                final Double distinctCount = convertToDouble(rawCount);
-
-                                                log.info("Resultado para providerId {}: {} EmailAddress únicos", providerId, distinctCount);
-
-                                                // Crear KPIs para cada campaña del provider
-                                                return Flux.fromIterable(providerCampaigns)
-                                                        .flatMap(campaign -> {
-                                                            String campaignId = campaign.getCampaignId();
-
-                                                            log.info("Creando KPI MP-A para campaña {}, provider {}: valor={}",
-                                                                    campaignId, providerId, distinctCount);
-
-                                                            Kpi kpi = new Kpi();
-                                                            kpi.setCampaignId(String.valueOf(campaignId));
-                                                            kpi.setCampaignSubId(String.valueOf(campaignId));
-                                                            kpi.setKpiId("MP-A");
-                                                            kpi.setKpiDescription("Alcance (Envíos) - COUNT DISTINCT EmailAddress");
-                                                            kpi.setValue(distinctCount);
-                                                            kpi.setType("cantidad");
-                                                            kpi.setCreatedUser("-");
-                                                            kpi.setCreatedDate(LocalDateTime.now());
-                                                            kpi.setUpdatedDate(LocalDateTime.now());
-                                                            kpi.setStatus("A");
-                                                            kpi.setFormat(String.valueOf(FORMAT_MP));
-                                                            kpi.setBatchId(finalBatchId);
-                                                            kpi.setTypeMedia(String.valueOf(MEDIO_PROPIO));
-                                                            kpi.setProviderId(campaign.getProviderId());
-                                                            return saveKpi(kpi);
-                                                        });
-                                            });
-                                });
+                        log.info("Guardando KPI MP-A para campaña: {}", kpi.getCampaignId());
+                        return saveKpi(kpi);
                     });
-        } catch (Exception e) {
-            log.error("Error en generateKpiScopeMailingParent: ", e);
-            return Flux.error(e); // Es mejor propagar el error para manejo superior
-        }
+        }).onErrorResume(e -> {
+            log.error("Error en generateKpiScopeMailingParent: {}", e.getMessage());
+            return Flux.empty();
+        });
     }
 
 
@@ -1133,9 +1084,9 @@ public class KpiRepositoryImpl implements KpiRepository {
 
                     // Para MP-V necesitamos la suma de ventas de MC, MF y MB
                     // Primero obtenemos las ventas para cada formato
-                    Mono<Double> salesMC = calculateSalesByProviderId(campaign.getProviderId(), FORMAT_MC);
-                    Mono<Double> salesMF = calculateSalesByProviderId(campaign.getProviderId(), FORMAT_MF);
-                    Mono<Double> salesMB = calculateSalesByProviderId(campaign.getProviderId(), FORMAT_MB);
+                    Mono<Double> salesMC = calculateSalesByProviderId(campaign.getProviderId(), FORMAT_MC,campaign.getCampaignId());
+                    Mono<Double> salesMF = calculateSalesByProviderId(campaign.getProviderId(), FORMAT_MF,campaign.getCampaignId());
+                    Mono<Double> salesMB = calculateSalesByProviderId(campaign.getProviderId(), FORMAT_MB,campaign.getCampaignId());
 
                     // Combinamos los tres valores y los sumamos
                     return Mono.zip(salesMC, salesMF, salesMB)
@@ -1194,7 +1145,7 @@ public class KpiRepositoryImpl implements KpiRepository {
                     log.info("Procesando campaña para MC-V: {}, providerId: {}", campaign.getCampaignId(), campaign.getProviderId());
 
                     // Obtener las ventas para esta campaña
-                    return calculateSalesByProviderId(campaign.getProviderId(), FORMAT_MC)
+                    return calculateSalesByProviderId(campaign.getProviderId(), FORMAT_MC,campaign.getCampaignId())
                             .flatMap(sales -> {
                                 log.info("Ventas calculadas para MC-V: {}", sales);
 
@@ -1240,7 +1191,7 @@ public class KpiRepositoryImpl implements KpiRepository {
                     log.info("Procesando campaña para MF-V: {}, providerId: {}", campaign.getCampaignId(), campaign.getProviderId());
 
                     // Obtener las ventas para esta campaña
-                    return calculateSalesByProviderId(campaign.getProviderId(), FORMAT_MF)
+                    return calculateSalesByProviderId(campaign.getProviderId(), FORMAT_MF,campaign.getCampaignId())
                             .flatMap(sales -> {
                                 log.info("Ventas calculadas para MF-V: {}", sales);
 
@@ -1286,7 +1237,7 @@ public class KpiRepositoryImpl implements KpiRepository {
                     log.info("Procesando campaña para MB-V: {}, providerId: {}", campaign.getCampaignId(), campaign.getProviderId());
 
                     // Obtener las ventas para esta campaña
-                    return calculateSalesByProviderId(campaign.getProviderId(), FORMAT_MB)
+                    return calculateSalesByProviderId(campaign.getProviderId(), FORMAT_MB,campaign.getCampaignId())
                             .flatMap(sales -> {
                                 log.info("Ventas calculadas para MB-V: {}", sales);
 
@@ -1332,7 +1283,7 @@ public class KpiRepositoryImpl implements KpiRepository {
                     log.info("Procesando campaña para PW-V: {}, providerId: {}", campaign.getCampaignId(), campaign.getProviderId());
 
                     // Obtener las ventas para esta campaña
-                    return calculateSalesByProviderId(campaign.getProviderId(), FORMAT_PW)
+                    return calculateSalesByProviderId(campaign.getProviderId(), FORMAT_PW,campaign.getCampaignId())
                             .flatMap(sales -> {
                                 log.info("Ventas calculadas para PW-V: {}", sales);
 
@@ -1378,7 +1329,7 @@ public class KpiRepositoryImpl implements KpiRepository {
                     log.info("Procesando campaña para PA-V: {}, providerId: {}", campaign.getCampaignId(), campaign.getProviderId());
 
                     // Obtener las ventas para esta campaña
-                    return calculateSalesByProviderId(campaign.getProviderId(), FORMAT_PA)
+                    return calculateSalesByProviderId(campaign.getProviderId(), FORMAT_PA,campaign.getCampaignId())
                             .flatMap(sales -> {
                                 log.info("Ventas calculadas para PA-V: {}", sales);
 
@@ -1414,99 +1365,72 @@ public class KpiRepositoryImpl implements KpiRepository {
      * @param format     Formato para el que se calculan las ventas
      * @return Mono<Double> Total de ventas
      */
-    private Mono<Double> calculateSalesByProviderId(String providerId, String format) {
-        log.info("Calculando ventas para proveedor: {} y formato: {}", providerId, format);
+    private Mono<Double> calculateSalesByProviderId(String providerId, String format, String campaignId) {
+        log.info("Calculando ventas para proveedor: {}, campaña: {} y formato: {}", providerId, campaignId, format);
 
-        // Primero obtenemos todos los campaignIds asociados con este providerId para el formato específico
-        Query campaignsQuery = Query.query(
+        // Primero, buscar las campañas relevantes para obtener los campaignSubId
+        Query campaignQuery = new Query(
                 Criteria.where("providerId").is(providerId)
-                        .and("media").elemMatch(
-                                Criteria.where("format").is(format)
-                        )
-        );
+                        .and("campaignId").is(campaignId)
+                        .and("media.format").is(format));
 
-        log.info("Ejecutando consulta para obtener campañas con providerId: {} y formato: {}", providerId, format);
+        campaignQuery.fields().include("campaignSubId");
 
-        return reactiveMongoTemplate.find(campaignsQuery, Campaign.class)
-                .map(Campaign::getCampaignId)
-                .filter(id -> id != null && !id.isEmpty())
+        return reactiveMongoTemplate.find(campaignQuery, Campaign.class, "campaigns")
+                .map(Campaign::getCampaignSubId)
                 .collectList()
-                .flatMap(campaignIds -> {
-                    if (campaignIds.isEmpty()) {
-                        log.warn("No se encontraron campañas para el proveedor: {} y formato: {}", providerId, format);
-                        return Mono.just(0.0);
+                .flatMapMany(campaignSubIds -> {
+                    if (campaignSubIds.isEmpty()) {
+                        log.info("No se encontraron campañas para el proveedor {}, campaña {} y formato {}",
+                                providerId, campaignId, format);
+                        return Flux.empty();
                     }
 
-                    log.info("Campañas encontradas para proveedor {} y formato {}: {}", providerId, format, campaignIds.size());
-                    log.debug("Lista de campaignIds: {}", campaignIds);
+                    log.info("Encontradas {} subcampañas relevantes", campaignSubIds.size());
 
-                    // Construir la agregación para calcular las ventas totales
-                    // Esto implementa el JOIN y WHERE del SQL original
+                    // Luego, realizar la agregación solo para los campaignSubId relevantes
                     Aggregation aggregation = Aggregation.newAggregation(
-                            // Filtrar por campaignIds (implementa el JOIN con WHERE)
-                            Aggregation.match(Criteria.where("campaignId").in(campaignIds)),
-                            // Calcular suma de total_revenue
-                            Aggregation.group().sum("total_revenue").as("totalSales")
+                            Aggregation.match(Criteria.where("campaignSubId").in(campaignSubIds)),
+                            Aggregation.group()
+                                    .sum("total_revenue").as("totalRevenue")
                     );
 
-                    log.info("Ejecutando agregación para calcular ventas en ga4_own_media");
-
                     return reactiveMongoTemplate.aggregate(
-                                    aggregation,
-                                    "ga4_own_media",
-                                    Document.class
-                            )
-                            .next()
-                            .map(result -> {
-                                // Extraer el total de ventas del resultado
-                                Object totalSalesObj = result.get("totalSales");
-                                log.info("Resultado de la agregación para proveedor {} y formato {}: totalSalesObj = {}, tipo = {}",
-                                        providerId, format, totalSalesObj,
-                                        totalSalesObj != null ? totalSalesObj.getClass().getName() : "null");
+                            aggregation,
+                            "ga4_own_media",
+                            Document.class
+                    );
+                })
+                .collectList()
+                .map(documents -> {
+                    double totalSales = 0.0;
 
-                                if (totalSalesObj == null) {
-                                    log.warn("totalSalesObj es null para proveedor: {} y formato: {}", providerId, format);
-                                    return 0.0;
+                    for (Document doc : documents) {
+                        Object totalRevenueObj = doc.get("totalRevenue");
+                        if (totalRevenueObj != null) {
+                            try {
+                                if (totalRevenueObj instanceof Number) {
+                                    totalSales += ((Number) totalRevenueObj).doubleValue();
+                                } else {
+                                    totalSales += Double.parseDouble(totalRevenueObj.toString());
                                 }
+                            } catch (Exception e) {
+                                log.error("Error al convertir totalRevenue: {}", e.getMessage());
+                            }
+                        }
+                    }
 
-                                // Convertir el resultado a Double de manera más robusta
-                                try {
-                                    if (totalSalesObj instanceof Double) {
-                                        return (Double) totalSalesObj;
-                                    } else if (totalSalesObj instanceof Integer) {
-                                        return ((Integer) totalSalesObj).doubleValue();
-                                    } else if (totalSalesObj instanceof Long) {
-                                        return ((Long) totalSalesObj).doubleValue();
-                                    } else if (totalSalesObj instanceof Number) {
-                                        // Manejar cualquier tipo numérico
-                                        return ((Number) totalSalesObj).doubleValue();
-                                    } else if (totalSalesObj instanceof String) {
-                                        // Intentar convertir String a Double
-                                        return Double.parseDouble((String) totalSalesObj);
-                                    } else {
-                                        // Último recurso: convertir a String y luego a Double
-                                        String strValue = totalSalesObj.toString();
-                                        log.info("Convirtiendo valor de tipo desconocido a String: {}", strValue);
-                                        return Double.parseDouble(strValue);
-                                    }
-                                } catch (Exception e) {
-                                    log.error("Error al convertir el valor totalSalesObj a Double: {}", e.getMessage());
-                                    log.error("Valor que causó el error: {} de tipo {}",
-                                            totalSalesObj, totalSalesObj.getClass().getName());
-                                    return 0.0;
-                                }
-                            })
-                            .onErrorResume(e -> {
-                                log.error("Error en la agregación para proveedor {} y formato {}: {}", providerId, format, e.getMessage());
-                                return Mono.just(0.0);
-                            })
-                            .defaultIfEmpty(0.0)
-                            .doOnSuccess(value -> {
-                                log.info("Ventas totales calculadas para proveedor {} y formato {}: {}", providerId, format, value);
-                            });
-                });
+                    log.info("Ventas totales calculadas para proveedor {}, campaña {} y formato {}: {}",
+                            providerId, campaignId, format, totalSales);
+                    return totalSales;
+                })
+                .onErrorResume(e -> {
+                    log.error("Error en la agregación para proveedor {}, campaña {} y formato {}: {}",
+                            providerId, campaignId, format, e.getMessage());
+                    return Mono.just(0.0);
+                })
+                .defaultIfEmpty(0.0);
     }
-
 
     /**
      * Implementación del método para generar KPIs de Transacciones para todos los formatos
@@ -1550,9 +1474,9 @@ public class KpiRepositoryImpl implements KpiRepository {
 
                     // Para MP-T necesitamos la suma de transacciones de MC, MF y MB
                     // Primero obtenemos las transacciones para cada formato
-                    Mono<Double> transactionsMC = calculateTransactionsByProviderId(campaign.getProviderId(), FORMAT_MC);
-                    Mono<Double> transactionsMF = calculateTransactionsByProviderId(campaign.getProviderId(), FORMAT_MF);
-                    Mono<Double> transactionsMB = calculateTransactionsByProviderId(campaign.getProviderId(), FORMAT_MB);
+                    Mono<Double> transactionsMC = calculateTransactionsByProviderId(campaign.getProviderId(), FORMAT_MC,campaign.getCampaignId());
+                    Mono<Double> transactionsMF = calculateTransactionsByProviderId(campaign.getProviderId(), FORMAT_MF,campaign.getCampaignId());
+                    Mono<Double> transactionsMB = calculateTransactionsByProviderId(campaign.getProviderId(), FORMAT_MB,campaign.getCampaignId());
 
                     // Combinamos los tres valores y los sumamos
                     return Mono.zip(transactionsMC, transactionsMF, transactionsMB)
@@ -1610,7 +1534,7 @@ public class KpiRepositoryImpl implements KpiRepository {
                     log.info("Procesando campaña para MC-T: {}, providerId: {}", campaign.getCampaignId(), campaign.getProviderId());
 
                     // Obtener las transacciones para esta campaña
-                    return calculateTransactionsByProviderId(campaign.getProviderId(), FORMAT_MC)
+                    return calculateTransactionsByProviderId(campaign.getProviderId(), FORMAT_MC,campaign.getCampaignId())
                             .flatMap(transactions -> {
                                 log.info("Transacciones calculadas para MC-T: {}", transactions);
 
@@ -1656,7 +1580,7 @@ public class KpiRepositoryImpl implements KpiRepository {
                     log.info("Procesando campaña para MF-T: {}, providerId: {}", campaign.getCampaignId(), campaign.getProviderId());
 
                     // Obtener las transacciones para esta campaña
-                    return calculateTransactionsByProviderId(campaign.getProviderId(), FORMAT_MF)
+                    return calculateTransactionsByProviderId(campaign.getProviderId(), FORMAT_MF,campaign.getCampaignId())
                             .flatMap(transactions -> {
                                 log.info("Transacciones calculadas para MF-T: {}", transactions);
 
@@ -1702,7 +1626,7 @@ public class KpiRepositoryImpl implements KpiRepository {
                     log.info("Procesando campaña para MB-T: {}, providerId: {}", campaign.getCampaignId(), campaign.getProviderId());
 
                     // Obtener las transacciones para esta campaña
-                    return calculateTransactionsByProviderId(campaign.getProviderId(), FORMAT_MB)
+                    return calculateTransactionsByProviderId(campaign.getProviderId(), FORMAT_MB,campaign.getCampaignId())
                             .flatMap(transactions -> {
                                 log.info("Transacciones calculadas para MB-T: {}", transactions);
 
@@ -1748,7 +1672,7 @@ public class KpiRepositoryImpl implements KpiRepository {
                     log.info("Procesando campaña para PW-T: {}, providerId: {}", campaign.getCampaignId(), campaign.getProviderId());
 
                     // Obtener las transacciones para esta campaña
-                    return calculateTransactionsByProviderId(campaign.getProviderId(), FORMAT_PW)
+                    return calculateTransactionsByProviderId(campaign.getProviderId(), FORMAT_PW,campaign.getCampaignId())
                             .flatMap(transactions -> {
                                 log.info("Transacciones calculadas para PW-T: {}", transactions);
 
@@ -1794,7 +1718,7 @@ public class KpiRepositoryImpl implements KpiRepository {
                     log.info("Procesando campaña para PA-T: {}, providerId: {}", campaign.getCampaignId(), campaign.getProviderId());
 
                     // Obtener las transacciones para esta campaña
-                    return calculateTransactionsByProviderId(campaign.getProviderId(), FORMAT_PA)
+                    return calculateTransactionsByProviderId(campaign.getProviderId(), FORMAT_PA,campaign.getCampaignId())
                             .flatMap(transactions -> {
                                 log.info("Transacciones calculadas para PA-T: {}", transactions);
 
@@ -1829,98 +1753,77 @@ public class KpiRepositoryImpl implements KpiRepository {
      * @param format     Formato para el que se calculan las transacciones
      * @return Mono<Double> Total de transacciones
      */
-    private Mono<Double> calculateTransactionsByProviderId(String providerId, String format) {
-        log.info("Calculando transacciones para proveedor: {} y formato: {}", providerId, format);
+    private Mono<Double> calculateTransactionsByProviderId(String providerId, String format , String campaignId) {
+        log.info("Calculando ventas para proveedor: {}, campaña: {} y formato: {}", providerId, campaignId, format);
 
-        // Primero obtenemos todos los campaignIds asociados con este providerId para el formato específico
-        Query campaignsQuery = Query.query(
+        // Primero, buscar las campañas relevantes para obtener los campaignSubId
+        Query campaignQuery = new Query(
                 Criteria.where("providerId").is(providerId)
-                        .and("media").elemMatch(
-                                Criteria.where("format").is(format)
-                        )
-        );
+                        .and("campaignId").is(campaignId)
+                        .and("media.format").is(format));
 
-        log.info("Ejecutando consulta para obtener campañas con providerId: {} y formato: {}", providerId, format);
+        campaignQuery.fields().include("campaignSubId");
 
-        return reactiveMongoTemplate.find(campaignsQuery, Campaign.class)
-                .map(Campaign::getCampaignId)
-                .filter(id -> id != null && !id.isEmpty())
+        return reactiveMongoTemplate.find(campaignQuery, Campaign.class, "campaigns")
+                .map(Campaign::getCampaignSubId)
                 .collectList()
-                .flatMap(campaignIds -> {
-                    if (campaignIds.isEmpty()) {
-                        log.warn("No se encontraron campañas para el proveedor: {} y formato: {}", providerId, format);
-                        return Mono.just(0.0);
+                .flatMapMany(campaignSubIds -> {
+                    if (campaignSubIds.isEmpty()) {
+                        log.info("No se encontraron campañas para el proveedor {}, campaña {} y formato {}",
+                                providerId, campaignId, format);
+                        return Flux.empty();
                     }
 
-                    log.info("Campañas encontradas para proveedor {} y formato {}: {}", providerId, format, campaignIds.size());
-                    log.debug("Lista de campaignIds: {}", campaignIds);
+                    log.info("Encontradas {} subcampañas relevantes", campaignSubIds.size());
 
-                    // Construir la agregación para calcular las transacciones totales
-                    // Esto implementa el JOIN y WHERE del SQL original
+                    // Luego, realizar la agregación solo para los campaignSubId relevantes
                     Aggregation aggregation = Aggregation.newAggregation(
-                            // Filtrar por campaignIds (implementa el JOIN con WHERE)
-                            Aggregation.match(Criteria.where("campaignId").in(campaignIds)),
-                            // Calcular suma de transactions
-                            Aggregation.group().sum("transactions").as("totalTransactions")
+                            Aggregation.match(Criteria.where("campaignSubId").in(campaignSubIds)),
+                            Aggregation.group()
+                                    .sum("transactions").as("transactionstotal")
                     );
 
-                    log.info("Ejecutando agregación para calcular transacciones en ga4_own_media");
-
                     return reactiveMongoTemplate.aggregate(
-                                    aggregation,
-                                    "ga4_own_media",
-                                    Document.class
-                            )
-                            .next()
-                            .map(result -> {
-                                // Extraer el total de transacciones del resultado
-                                Object totalTransactionsObj = result.get("totalTransactions");
-                                log.info("Resultado de la agregación para proveedor {} y formato {}: totalTransactionsObj = {}, tipo = {}",
-                                        providerId, format, totalTransactionsObj,
-                                        totalTransactionsObj != null ? totalTransactionsObj.getClass().getName() : "null");
+                            aggregation,
+                            "ga4_own_media",
+                            Document.class
+                    );
+                })
+                .collectList()
+                .map(documents -> {
+                    double totalSales = 0.0;
 
-                                if (totalTransactionsObj == null) {
-                                    log.warn("totalTransactionsObj es null para proveedor: {} y formato: {}", providerId, format);
-                                    return 0.0;
+                    for (Document doc : documents) {
+                        Object totalRevenueObj = doc.get("transactionstotal");
+                        if (totalRevenueObj != null) {
+                            try {
+                                if (totalRevenueObj instanceof Number) {
+                                    totalSales += ((Number) totalRevenueObj).doubleValue();
+                                } else {
+                                    totalSales += Double.parseDouble(totalRevenueObj.toString());
                                 }
+                            } catch (Exception e) {
+                                log.error("Error al convertir transactionstotal: {}", e.getMessage());
+                            }
+                        }
+                    }
 
-                                // Convertir el resultado a Double de manera más robusta
-                                try {
-                                    if (totalTransactionsObj instanceof Double) {
-                                        return (Double) totalTransactionsObj;
-                                    } else if (totalTransactionsObj instanceof Integer) {
-                                        return ((Integer) totalTransactionsObj).doubleValue();
-                                    } else if (totalTransactionsObj instanceof Long) {
-                                        return ((Long) totalTransactionsObj).doubleValue();
-                                    } else if (totalTransactionsObj instanceof Number) {
-                                        // Manejar cualquier tipo numérico
-                                        return ((Number) totalTransactionsObj).doubleValue();
-                                    } else if (totalTransactionsObj instanceof String) {
-                                        // Intentar convertir String a Double
-                                        return Double.parseDouble((String) totalTransactionsObj);
-                                    } else {
-                                        // Último recurso: convertir a String y luego a Double
-                                        String strValue = totalTransactionsObj.toString();
-                                        log.info("Convirtiendo valor de tipo desconocido a String: {}", strValue);
-                                        return Double.parseDouble(strValue);
-                                    }
-                                } catch (Exception e) {
-                                    log.error("Error al convertir el valor totalTransactionsObj a Double: {}", e.getMessage());
-                                    log.error("Valor que causó el error: {} de tipo {}",
-                                            totalTransactionsObj, totalTransactionsObj.getClass().getName());
-                                    return 0.0;
-                                }
-                            })
-                            .onErrorResume(e -> {
-                                log.error("Error en la agregación para proveedor {} y formato {}: {}", providerId, format, e.getMessage());
-                                return Mono.just(0.0);
-                            })
-                            .defaultIfEmpty(0.0)
-                            .doOnSuccess(value -> {
-                                log.info("Transacciones totales calculadas para proveedor {} y formato {}: {}", providerId, format, value);
-                            });
-                });
+                    log.info("Transacciones totales calculadas para proveedor {}, campaña {} y formato {}: {}",
+                            providerId, campaignId, format, totalSales);
+                    return totalSales;
+                })
+                .onErrorResume(e -> {
+                    log.error("Error en la agregación para proveedor {}, campaña {} y formato {}: {}",
+                            providerId, campaignId, format, e.getMessage());
+                    return Mono.just(0.0);
+                })
+                .defaultIfEmpty(0.0);
     }
+
+
+
+
+
 
 
     /**
@@ -2215,8 +2118,7 @@ public class KpiRepositoryImpl implements KpiRepository {
         return reactiveMongoTemplate.find(
                         Query.query(Criteria.where("kpiId").in("MP-I", "MP-A", "MP-C")
                                 .and("status").is("A")),
-                        Kpi.class,
-                        "kpi_v2"
+                        Kpi.class
                 )
                 .collectMultimap(Kpi::getCampaignId)
                 .flatMapMany(kpisByCampaign -> {
@@ -2330,8 +2232,7 @@ public class KpiRepositoryImpl implements KpiRepository {
         return reactiveMongoTemplate.find(
                         Query.query(Criteria.where("kpiId").in("MCC", "MFC", "MBC", "MP-I")
                                 .and("status").is("A")),
-                        Kpi.class,
-                        "kpi_v2"
+                        Kpi.class
                 )
                 .collectMultimap(Kpi::getCampaignId)
                 .flatMapMany(kpisByCampaign -> {
@@ -2417,8 +2318,7 @@ public class KpiRepositoryImpl implements KpiRepository {
         return reactiveMongoTemplate.find(
                         Query.query(Criteria.where("kpiId").in("PA-I", "PA-A")
                                 .and("status").is("A")),
-                        Kpi.class,
-                        "kpi_v2"
+                        Kpi.class
                 )
                 .collectMultimap(Kpi::getCampaignId)
                 .flatMapMany(kpisByCampaign -> {
@@ -2558,189 +2458,67 @@ public class KpiRepositoryImpl implements KpiRepository {
      */
     public Flux<Kpi> generateKpiDeliveredMailParent() {
         final String batchId = generateBatchId();
-        log.info("Iniciando generación de KPIs de correos entregados para Mailing Padre (MP). Batch ID: {}", batchId);
+        log.info("Generando KPI de entregas para Mailing Padre (MP)");
 
-        try {
-            // Paso 1: Obtener todas las campañas activas con formato MP
-            log.info("Paso 1: Consultando campañas activas con formato MP");
-            return reactiveMongoTemplate.find(
-                            Query.query(Criteria.where("status").in("En proceso")
-                                    .and("media").elemMatch(Criteria.where("format").is(FORMAT_MP))),
-                            Campaign.class
-                    )
-                    .collectList()
-                    .doOnNext(campaigns -> log.info("Se encontraron {} campañas activas", campaigns.size()))
-                    .flatMapMany(campaigns -> {
-                        // Verificar si hay campañas
-                        if (campaigns == null || campaigns.isEmpty()) {
-                            log.info("No se encontraron campañas activas para Mailing Padre (MP)");
-                            return Flux.empty();
-                        }
+        // Obtener campañas activas con formato MP
+        return reactiveMongoTemplate.find(
+                Query.query(Criteria.where("status").is("En proceso")
+                        .and("media").elemMatch(Criteria.where("format").is(FORMAT_MP))),
+                Campaign.class
+        ).flatMap(campaign -> {
+            log.info("Procesando campaña para MP-E: {}, providerId: {}",
+                    campaign.getCampaignId(), campaign.getProviderId());
 
-                        // Paso 2: Agrupar campañas por providerId
-                        log.info("Paso 2: Agrupando campañas por providerId");
-                        Map<String, List<Campaign>> campaignsByProvider = campaigns.stream()
-                                .filter(campaign -> {
-                                    if (campaign == null) {
-                                        log.warn("Se encontró una campaña nula");
-                                        return false;
-                                    }
+            return reactiveMongoTemplate.aggregate(
+                            Aggregation.newAggregation(
+                                    // Join con sendjobs
+                                    Aggregation.lookup(
+                                            "bq_ds_campanias_salesforce_sendjobs",
+                                            "SendID",
+                                            "SendID",
+                                            "sendjobs"
+                                    ),
+                                    // Desenrollar el resultado del join
+                                    Aggregation.unwind("sendjobs"),
+                                    // Match por campaignId y EventType
+                                    Aggregation.match(Criteria.where("sendjobs.campaignId").is(campaign.getCampaignId())
+                                            .and("EventType").is("Sent")),
+                                    // Group por EmailAddress para DISTINCT COUNT
+                                    Aggregation.group("EmailAddress"),
+                                    // Count final de emails únicos
+                                    Aggregation.group()
+                                            .count().as("distinctCount")
+                            ),
+                            "bq_ds_campanias_salesforce_opens",
+                            Document.class
+                    ).next()
+                    .flatMap(result -> {
+                        Integer count = result.getInteger("distinctCount");
+                        log.info("Entregados calculados para MP-E: {}", count);
 
-                                    String providerId = campaign.getProviderId();
-                                    if (providerId == null || providerId.trim().isEmpty()) {
-                                        log.warn("Campaña {} ignorada: providerId nulo o vacío",
-                                                campaign.getCampaignId() != null ? campaign.getCampaignId() : "ID desconocido");
-                                        return false;
-                                    }
-                                    return true;
-                                })
-                                .collect(Collectors.groupingBy(Campaign::getProviderId));
+                        Kpi kpi = new Kpi();
+                        kpi.setCampaignId(campaign.getCampaignId());
+                        kpi.setCampaignSubId(campaign.getCampaignId());
+                        kpi.setKpiId("MP-E");
+                        kpi.setKpiDescription("Entregados");
+                        kpi.setValue(count.doubleValue());
+                        kpi.setType("cantidad");
+                        kpi.setCreatedUser("-");
+                        kpi.setCreatedDate(LocalDateTime.now());
+                        kpi.setUpdatedDate(LocalDateTime.now());
+                        kpi.setStatus("A");
+                        kpi.setFormat(FORMAT_MP);
+                        kpi.setBatchId(batchId);
+                        kpi.setTypeMedia(MEDIO_PROPIO);
+                        kpi.setProviderId(campaign.getProviderId());
 
-                        log.info("Se encontraron {} proveedores diferentes", campaignsByProvider.size());
-
-                        // Paso 3: Procesar cada providerId por separado
-                        return Flux.fromIterable(campaignsByProvider.entrySet())
-                                .flatMap(entry -> {
-                                    final String providerId = entry.getKey();
-                                    final List<Campaign> providerCampaigns = entry.getValue();
-
-                                    log.info("Paso 3: Procesando providerId: '{}' con {} campañas", providerId, providerCampaigns.size());
-
-                                    // Paso 3.1: Extraer campaignIds válidos
-                                    List<String> campaignIds = providerCampaigns.stream()
-                                            .map(Campaign::getCampaignId)
-                                            .filter(id -> {
-                                                boolean isValid = id != null && !id.trim().isEmpty();
-                                                if (!isValid) {
-                                                    log.warn("Se encontró un campaignId nulo o vacío para providerId: {}", providerId);
-                                                }
-                                                return isValid;
-                                            })
-                                            .collect(Collectors.toList());
-
-                                    log.info("Encontrados {} campaignIds válidos para providerId: '{}'", campaignIds.size(), providerId);
-
-                                    if (campaignIds.isEmpty()) {
-                                        log.warn("No hay campaignIds válidos para providerId: '{}'", providerId);
-                                        return Flux.empty();
-                                    }
-
-                                    // Paso 4: Ejecutar la agregación para contar emailAddress únicos
-                                    log.info("Paso 4: Ejecutando agregación para providerId: '{}' con campaignIds: {}", providerId, campaignIds);
-
-                                    try {
-                                        // Esta agregación sigue exactamente la estructura del query SQL:
-                                        // SELECT DISTINCT COUNT(a.EmailAddress)
-                                        // FROM bq_ds_campanias_salesforce_opens a
-                                        // INNER JOIN bq_ds_campanias_salesforce_sendjobs b ON a.SendID = b.SendID
-                                        // INNER JOIN Campaigns c ON c.campaingId = b.campaingId
-                                        // WHERE c.ProveedorId = "ID" AND EventType = "Sent"
-                                        return reactiveMongoTemplate.aggregate(
-                                                        Aggregation.newAggregation(
-                                                                // Parte del WHERE c.campaignId IN (ids de campañas del proveedor)
-                                                                Aggregation.match(Criteria.where("campaignId").in(campaignIds)),
-                                                                // Proyectar solo los campos necesarios
-                                                                Aggregation.project("SendID", "campaignId")
-                                                                        .andExclude("_id"),
-                                                                // INNER JOIN con la colección de opens
-                                                                Aggregation.lookup(
-                                                                        "bq_ds_campanias_salesforce_opens",  // from
-                                                                        "SendID",                            // localField
-                                                                        "SendID",                            // foreignField
-                                                                        "opens"                              // as
-                                                                ),
-                                                                // Filtrar documentos que tienen al menos un resultado en el join
-                                                                Aggregation.match(Criteria.where("opens").not().size(0)),
-                                                                // Desenrollar el array de opens para procesarlos individualmente
-                                                                Aggregation.unwind("opens"),
-                                                                // Filtrar por EventType = "Sent"
-                                                                Aggregation.match(Criteria.where("opens.EventType").is("Sent")),
-                                                                // Proyectar EmailAddress para el paso siguiente
-                                                                Aggregation.project("opens.EmailAddress"),
-                                                                // Agrupar por EmailAddress para contar cada uno una sola vez (DISTINCT)
-                                                                Aggregation.group("EmailAddress"),
-                                                                // Contar el número total de grupos (COUNT DISTINCT)
-                                                                Aggregation.group().count().as("distinctCount")
-                                                        ),
-                                                        "bq_ds_campanias_salesforce_sendjobs",
-                                                        Document.class
-                                                )
-                                                .collectList()
-                                                .doOnNext(results -> log.info("Agregación completada para providerId: '{}'. Resultados: {}",
-                                                        providerId, results.size()))
-                                                .flatMapMany(results -> {
-                                                    // Extraer el conteo o usar 0 si no hay resultados
-                                                    final Integer distinctCount;
-                                                    if (!results.isEmpty() && results.get(0) != null) {
-                                                        Document countDoc = results.get(0);
-                                                        distinctCount = countDoc.getInteger("distinctCount", 0);
-                                                    } else {
-                                                        distinctCount = 0;
-                                                    }
-
-                                                    log.info("Conteo final para providerId '{}': {} emails únicos", providerId, distinctCount);
-
-                                                    // Paso 5: Crear KPIs para cada campaña del proveedor
-                                                    log.info("Paso 5: Creando KPIs para las {} campañas del providerId: '{}'",
-                                                            providerCampaigns.size(), providerId);
-
-                                                    return Flux.fromIterable(providerCampaigns)
-                                                            .flatMap(campaign -> {
-                                                                String campaignId = campaign.getCampaignId();
-                                                                if (campaignId == null || campaignId.trim().isEmpty()) {
-                                                                    log.warn("Saltando creación de KPI: campaignId nulo o vacío");
-                                                                    return Mono.empty();
-                                                                }
-
-                                                                log.info("Creando KPI MP-E para campaña: '{}', providerId: '{}', valor: {}",
-                                                                        campaignId, providerId, distinctCount);
-
-                                                                try {
-                                                                    Kpi kpi = new Kpi();
-                                                                    kpi.setCampaignId(campaignId);
-                                                                    kpi.setCampaignSubId(campaignId);
-                                                                    kpi.setKpiId("MP-E");
-                                                                    kpi.setKpiDescription("Correos Entregados Mailing Padre");
-                                                                    // Almacenar como Double pero desde un Integer
-                                                                    kpi.setValue(distinctCount.doubleValue());
-                                                                    kpi.setType("cantidad");
-                                                                    kpi.setCreatedUser("-");
-                                                                    kpi.setCreatedDate(LocalDateTime.now());
-                                                                    kpi.setUpdatedDate(LocalDateTime.now());
-                                                                    kpi.setStatus("A");
-                                                                    kpi.setProviderId(campaign.getProviderId());
-                                                                    kpi.setKpiDescription("MEDIO PROPIO");
-                                                                    kpi.setFormat("MP-E");
-                                                                    kpi.setBatchId(batchId);
-
-
-                                                                    // Guardar el KPI
-                                                                    log.info("Guardando KPI MP-E para campaña: '{}'", campaignId);
-                                                                    return saveKpi(kpi)
-                                                                            .doOnSuccess(savedKpi ->
-                                                                                    log.info("KPI guardado exitosamente para campaña: '{}'", campaignId))
-                                                                            .doOnError(error ->
-                                                                                    log.error("Error al guardar KPI para campaña '{}': {}",
-                                                                                            campaignId, error.getMessage()));
-
-                                                                } catch (Exception e) {
-                                                                    log.error("Error al crear KPI para campaña '{}': {}",
-                                                                            campaignId, e.getMessage());
-                                                                    return Mono.empty();
-                                                                }
-                                                            });
-                                                });
-                                    } catch (Exception e) {
-                                        log.error("Error durante la agregación para providerId '{}': {}",
-                                                providerId, e.getMessage(), e);
-                                        return Flux.empty();
-                                    }
-                                });
+                        log.info("Guardando KPI MP-E para campaña: {}", kpi.getCampaignId());
+                        return saveKpi(kpi);
                     });
-        } catch (Exception e) {
-            log.error("Error general en generateKpiDeliveredMailParent: {}", e.getMessage(), e);
+        }).onErrorResume(e -> {
+            log.error("Error en generateKpiDeliveredMailParent: {}", e.getMessage());
             return Flux.empty();
-        }
+        });
     }
 
     /**
@@ -3912,7 +3690,3 @@ public class KpiRepositoryImpl implements KpiRepository {
     }
 
 }
-
-
-
-
